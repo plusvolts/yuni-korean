@@ -301,3 +301,11 @@ textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 13
 .rw-tag.done { background: #e3f6e8; color: #1f7a3a; }
 .list li.rw-used { color: var(--muted); }
 .btn.rw-check.on { background: #e3f6e8; color: #1f7a3a; }
+/* 아빠 화면: 받은 보상 관리 (세 앱 공통) */
+.rw-rows { list-style: none; margin: 0 0 8px; padding: 0; display: grid; gap: 10px; }
+.rw-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border: 2px solid var(--line); border-radius: 14px; }
+.rw-row .rw-info { flex: 1 1 180px; display: grid; gap: 2px; }
+.rw-row .rw-info small { color: var(--muted); font-weight: 700; }
+.rw-row.rw-used { background: #f3faf5; border-color: #bfe5cb; }
+.rw-row.rw-used .rw-info b { color: var(--muted); }
+@media (max-width: 560px) { .topbar [data-act=rewardadmin] { display: none; } } /* 폰: 맨 위 카드로 들어가요 (상단이 좁아서) */

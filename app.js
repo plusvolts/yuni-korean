@@ -241,7 +241,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.1.0';
+  const APP_VERSION = '0.1.1';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -728,8 +728,8 @@ window.HANGUL = (() => {
       save();
     }
   }
-  // 별: 한 번에 맞히면 1개, 다시 맞히면 0개, 문제당 한 번만. 하루 끝 보너스 3개 포함 하루 20개 이하
-  const DAY_STAR_MAX = 20, DAY_BONUS = 3;
+  // 별: 한 번에 맞히면 1개, 다시 맞히면 0개, 문제당 한 번만. 하루 끝 보너스 3개 포함 하루 50개 이하 (v0.1.1, 아빠 요청으로 20 → 50)
+  const DAY_STAR_MAX = 50, DAY_BONUS = 3;
   const actKey = () => `${L.special ? 'c' : L.s}:${L.i}`;
   function award(attempts) {
     const key = actKey(); const tl = todayLog();

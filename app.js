@@ -241,7 +241,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.1.1';
+  const APP_VERSION = '0.2.0';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -485,7 +485,7 @@ window.HANGUL = (() => {
         </div>
         <button class="goal card" data-act="rewards" style="text-align:left"><div class="row"><b>🎁 ${esc(S.settings.goalText)}</b><div class="spacer"></div><span class="muted">${g >= goal ? '달성! 🎉' : `${g} / ${goal}`}</span></div>
           <div class="goal-bar"><i style="width:${pct}%"></i></div>
-          <div class="row" style="margin-top:8px"><span class="muted">받은 보상 ${S.rewards.length}개</span><div class="spacer"></div><span class="muted">보상 목록 보기 ›</span></div></button>
+          <div class="row" style="margin-top:8px"><span class="muted">받은 보상 ${S.rewards.length}개${rwCount().left ? ` · 안 쓴 보상 ${rwCount().left}개` : ''}</span><div class="spacer"></div><span class="muted">보상 목록 보기 ›</span></div></button>
       </div>
     </div>`, {
       go: () => startLesson(S.pos.u, S.pos.d, S.pos.s),
@@ -540,6 +540,9 @@ window.HANGUL = (() => {
   }
 
   /* ================= 받은 보상 ================= */
+  // 보상마다 used: 사용한 날짜(YYYY-MM-DD) 또는 없음. 아빠 화면에서 체크하면 윤이 보상 목록에도 사용완료로 보여요 (공통 v2026-09)
+  function rwCount() { const n = S.rewards.length, u = S.rewards.filter(r => r.used).length; return { n, u, left: n - u }; }
+  function rwSummary() { const c = rwCount(); return `아직 안 쓴 보상 ${c.left}개 · 사용완료 ${c.u}개`; }
   function rewardScreen() {
     const g = Math.max(0, S.stars - S.goalBase); const goal = Math.max(1, Number(S.settings.goalStars));
     const list = S.rewards.slice().reverse();
@@ -548,7 +551,8 @@ window.HANGUL = (() => {
       <div class="card goal" style="width:100%"><div class="row"><b>지금 목표: ${esc(S.settings.goalText)}</b><div class="spacer"></div><span class="muted">${Math.min(g, goal)} / ${goal}</span></div>
         <div class="goal-bar"><i style="width:${Math.min(100, Math.round(g / goal * 100))}%"></i></div>
         ${g >= goal ? '<p style="margin:10px 0 0;font-weight:800">목표 달성! 아빠에게 보여줘요 🎉</p>' : `<p class="muted" style="margin:10px 0 0">별 ${goal - g}개만 더 모으면 돼요!</p>`}</div>
-      ${list.length ? `<div class="grid">${list.map((r, i) => `<div class="tile"><span class="em">🎁</span><b>${esc(r.text)}</b><small>${esc(r.date)} · 별 ${r.stars}개</small><small>${list.length - i}번째 보상</small></div>`).join('')}</div>`
+      ${list.length ? `<p class="muted" style="margin:0;font-weight:800">${rwSummary()}</p>` : ''}
+      ${list.length ? `<div class="grid">${list.map((r, i) => `<div class="tile${r.used ? ' used' : ''}"><span class="em">${r.used ? '✅' : '🎁'}</span><b>${esc(r.text)}</b><small>${esc(r.date)} · 별 ${r.stars}개</small><small>${list.length - i}번째 보상</small><span class="rw-tag${r.used ? ' done' : ''}">${r.used ? `사용완료 · ${esc(r.used)}` : '아직 안 썼어요'}</span></div>`).join('')}</div>`
         : '<p class="muted">아직 받은 보상이 없어요. 별을 모아서 첫 보상을 받아봐요!</p>'}
     </div>`, { home: homeScreen });
     if (g >= goal) ko('목표 달성! 아빠에게 보여줘요!');
@@ -1465,8 +1469,9 @@ window.HANGUL = (() => {
         <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="star" data-arg="-10">−10</button><button class="btn small" data-act="star" data-arg="-1">−1</button><button class="btn small" data-act="star" data-arg="1">+1</button><button class="btn small" data-act="star" data-arg="10">+10</button></div>
         <div class="code-row" style="margin-top:10px"><input id="starSet" type="number" min="0" placeholder="개수"><button class="btn small primary" data-act="starset">이 개수로 맞추기</button></div>
       </div>
-      <div class="card"><h3>받은 보상 (${S.rewards.length}개)</h3>
-        ${S.rewards.length ? `<ol class="list">${S.rewards.map((r, i) => `<li>${esc(r.date)} — ${esc(r.text)} (별 ${r.stars}개) <button class="btn small" style="min-height:36px;padding:4px 10px" data-act="delrw" data-arg="${i}">삭제</button></li>`).join('')}</ol>` : '<p class="muted">아직 없어요. 목표를 달성하면 아래 설정의 “🎁 보상 줬어요”를 눌러 기록하세요.</p>'}
+      <div class="card"><h3 id="rwHead">받은 보상 (${S.rewards.length}개 · 사용완료 ${rwCount().u}개)</h3>
+        ${S.rewards.length ? `<ol class="list">${S.rewards.map((r, i) => `<li class="${r.used ? 'rw-used' : ''}">${esc(r.date)} — ${esc(r.text)} (별 ${r.stars}개) <button class="btn small rw-check${r.used ? ' on' : ''}" style="min-height:36px;padding:4px 10px" data-act="usedrw" data-arg="${i}" aria-pressed="${r.used ? 'true' : 'false'}">${r.used ? `✅ 사용완료 (${esc(r.used)})` : '☐ 사용완료 체크'}</button> <button class="btn small" style="min-height:36px;padding:4px 10px" data-act="delrw" data-arg="${i}">삭제</button></li>`).join('')}</ol>` : '<p class="muted">아직 없어요. 목표를 달성하면 아래 설정의 “🎁 보상 줬어요”를 눌러 기록하세요.</p>'}
+        ${S.rewards.length ? '<p class="muted">보상을 실제로 쓰면 “사용완료 체크”를 눌러 주세요. 윤이의 보상 목록에도 사용완료로 보여요. 다시 누르면 취소돼요.</p>' : ''}
       </div>
       <div class="card"><h3>진도 옮기기·백업</h3>
         <p>이 기기의 현재 진도 코드: <b style="font-size:24px">${code}</b> <span class="muted">(단원-일차-단계)</span></p>
@@ -1544,6 +1549,15 @@ window.HANGUL = (() => {
       star: a => { S.stars = Math.max(0, S.stars + Number(a)); S.goalBase = Math.min(S.goalBase, S.stars); save(); parentScreen(); },
       starset: () => { const v = parseInt(document.getElementById('starSet').value, 10); if (!(v >= 0)) return toast('0 이상의 숫자를 적어주세요'); S.stars = v; S.goalBase = Math.min(S.goalBase, S.stars); save(); toast(`별을 ${v}개로 맞췄어요`); parentScreen(); },
       delrw: (i, btn) => { if (!btn.dataset.sure) { btn.dataset.sure = 1; btn.textContent = '한 번 더 누르면 삭제'; return; } S.rewards.splice(+i, 1); save(); parentScreen(); },
+      usedrw: (i, btn) => { // 화면을 다시 그리지 않고 그 줄만 바꿔요 (스크롤 유지)
+        const r = S.rewards[+i]; if (!r) return;
+        r.used = r.used ? null : today(); save();
+        btn.classList.toggle('on', !!r.used); btn.setAttribute('aria-pressed', r.used ? 'true' : 'false');
+        btn.textContent = r.used ? `✅ 사용완료 (${r.used})` : '☐ 사용완료 체크';
+        const li = btn.closest('li'); if (li) li.classList.toggle('rw-used', !!r.used);
+        const h = document.getElementById('rwHead'); if (h) h.textContent = `받은 보상 (${S.rewards.length}개 · 사용완료 ${rwCount().u}개)`;
+        toast(r.used ? '사용완료로 표시했어요' : '사용 전으로 되돌렸어요');
+      },
       spec: specScreen,
       checkver: async () => {
         const info = document.getElementById('verInfo'); if (info) info.textContent = '· 확인 중…';

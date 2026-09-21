@@ -241,7 +241,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.2.1';
+  const APP_VERSION = '0.3.1';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -259,7 +259,7 @@ window.HANGUL = (() => {
   /* ================= 저장소 ================= */
   function defaults() {
     return {
-      settings: {
+      settings: { parentPin: '1234',
         robotName: '로보', childName: '윤이', dailyLimit: 20, koVoice: '', koRate: 0.9, dictRate: 0.8, listenMax: 0,
         spaceOn: true, spaceFrom: 7, punctOn: true, punctFrom: 2, classSpace: true, classPunct: true,
         goalStars: 50, goalText: '아빠와 약속한 선물',
@@ -733,12 +733,13 @@ window.HANGUL = (() => {
       save();
     }
   }
-  // 별: 한 번에 맞히면 1개, 다시 맞히면 0개, 문제당 한 번만. 하루 끝 보너스 3개 포함 하루 50개 이하 (v0.1.1, 아빠 요청으로 20 → 50)
+  // 별: 몇 번 만에 맞히든 스스로 정답을 넣으면 1개, 못 맞히고 넘어가면 0개 (공통 64번, v0.3.1). 문제당 한 번만.
+  // 하루 끝 보너스 3개 포함 하루 50개 이하 (v0.1.1, 아빠 요청으로 20 → 50). 정답률·복습 기록은 지금처럼 첫 시도 기준
   const DAY_STAR_MAX = 50, DAY_BONUS = 3;
   const actKey = () => `${L.special ? 'c' : L.s}:${L.i}`;
-  function award(attempts) {
+  function award(solved) {
     const key = actKey(); const tl = todayLog();
-    let n = attempts === 0 ? 1 : 0;
+    let n = solved ? 1 : 0;
     const room = DAY_STAR_MAX - (tl.bonus ? 0 : DAY_BONUS) - tl.stars;
     if (L.awarded[key] || room < n) n = 0; // 이전 버튼으로 다시 풀어도 별은 한 번만
     L.awarded[key] = 1;
@@ -842,7 +843,7 @@ window.HANGUL = (() => {
     f.right = async (opts = {}) => {
       if (f.done) return; f.done = true;
       const my = actToken; ding();
-      const n = award(f.att); flash(n ? '⭐' : '👍');
+      const n = award(true); flash(n ? '⭐' : '👍');
       if (f.att === 0) { stat(rules, [], true); if (a.w && cfg.srs !== false && !L.marked[actKey()]) mark(a.w, true, a.review); if (a.challenge) { L.ch.n++; L.ch.ok++; } }
       else if (a.challenge && !L.statted['ch' + actKey()]) { L.statted['ch' + actKey()] = 1; L.ch.n++; }
       if (cfg.after) cfg.after(f.att);
@@ -1070,7 +1071,7 @@ window.HANGUL = (() => {
     const title = a.src === 'class' ? `📝 우리 반 받아쓰기${S.cls.title ? ' ' + esc(S.cls.title) : ''}` : a.src === 'grade' ? `🎖️ ${a.g}급 받아쓰기` : '✏️ 잘 듣고 써요';
     const idxInStep = L.acts.filter(x => x.type === 'dict').indexOf(a) + 1; const nDict = L.acts.filter(x => x.type === 'dict').length;
     const scoring = [a.space ? '띄어쓰기도 봐요' : '', a.punct ? '문장부호도 봐요' : ''].filter(Boolean).join(' · ');
-    let copyMode = false; let skipShown = false;
+    let copyMode = false;
     const redraw = () => { const g = document.getElementById('grid'); if (g) g.innerHTML = gridHtml(cp); };
     const canListen = () => { const mx = Number(S.settings.listenMax) || 0; return !mx || a.heardN < mx; };
     const listen = slow => {
@@ -1085,8 +1086,9 @@ window.HANGUL = (() => {
         copyMode = true;
         const el = document.getElementById('hintcard'); el.hidden = false;
         el.innerHTML = `<b>정답을 보고 따라 써요</b><div class="answer">${esc(a.text)}</div>`;
-        cp.setText(''); cp.clearMarks(); redraw(); setHint('');
-        ko('정답을 보고 따라 써 봐요.');
+        cp.setText(''); cp.clearMarks(); redraw(); setHint('정답을 따라 쓰면 별을 받아요 ⭐');
+        document.getElementById('skipRow').hidden = false; // 정답을 본 뒤에는 넘어가기(별 0)도 바로 보여요
+        ko('정답을 보고 따라 써 봐요. 맞게 쓰면 별을 받아요.');
       },
     });
     render('lesson', lessonFrame(`<div class="prompt dict-left">
@@ -1108,7 +1110,7 @@ window.HANGUL = (() => {
       right: () => { cp.setCursor(cp.cur + 1); redraw(); },
       cur: (i, el, e) => { e.stopPropagation(); if (+i >= 0) { cp.setCursor(+i + 1); redraw(); } },
       curend: () => { cp.setCursor(cp.chars.length + 1); redraw(); },
-      skip: () => { if (!f.done) { f.done = true; award(3); nextAct(); } },
+      skip: () => { if (!f.done) { f.done = true; award(false); nextAct(); } },
       submit: async () => {
         if (f.done) return;
         cp.commit(); const input = cp.text();
@@ -1124,10 +1126,10 @@ window.HANGUL = (() => {
         if (res.ok) {
           if (!copyMode) recordDict(a, f.att === 0);
           L.results.push({ text: a.text, ok: f.att === 0 && !copyMode });
-          if (copyMode) { f.done = true; ding(); flash('👍'); award(3); setHint('잘 따라 썼어요!'); const my = actToken; await ko('잘 따라 썼어요!'); await sleep(300); if (my === actToken) nextAct(); return; }
+          if (copyMode) { f.done = true; ding(); const n = award(true); flash(n ? '⭐' : '👍'); setHint(n ? '잘 따라 썼어요! ⭐' : '잘 따라 썼어요!'); const my = actToken; await ko('잘 따라 썼어요!'); await sleep(300); if (my === actToken) nextAct(); return; }
           setHint('정답! 🎉'); return f.right({ quiet: true }).then(() => {});
         }
-        if (copyMode) { setHint('주황색 글자를 정답과 비교해 봐요'); if (!skipShown) { skipShown = true; document.getElementById('skipRow').hidden = false; } return; }
+        if (copyMode) { setHint('주황색 글자를 정답과 비교해 봐요. 맞게 따라 쓰면 별을 받아요'); return; }
         if (f.att === 0) { recordDict(a, false, res); L.results.push({ text: a.text, ok: false }); }
         const onlySpace = res.lettersOk && res.punctOk && !res.spaceOk;
         const cat = onlySpace ? '띄어쓰기' : (res.errs.find(x => x.cat !== '기타') || res.errs[0] || { cat: '기타' }).cat;
@@ -1272,16 +1274,94 @@ window.HANGUL = (() => {
   }
 
   /* ================= 아빠 화면 ================= */
+  /* ================= 아빠 화면 공통: 암호(61)·통계(62)·탭(63) — 세 앱 같은 코드 (plan/0_COMMON_spec.md 5-1) ================= */
+  const DEFAULT_PIN = '1234';
+  const parentPin = () => String(S.settings.parentPin || DEFAULT_PIN);
+  const PARENT_SCREENS = ['gate', 'pinreset', 'parent', 'rewardadmin', 'spec'];
+  // 앱을 켜 둔 시간(아빠 화면 제외) — 통계용. 하루 시간 제한은 계속 sec(학습 화면)만 써요
+  setInterval(() => { if (!document.hidden && screen && !PARENT_SCREENS.includes(screen)) { const l = todayLog(); l.app = (l.app || 0) + 10; save(); } }, 10000);
+  const gateFocus = () => setTimeout(() => { const i = document.getElementById('ans'); if (i) { i.focus(); i.addEventListener('keydown', e => { if (e.key === 'Enter') H.ok(); }); } }, 50);
   function gateScreen(next) {
-    const a = 3 + Math.floor(Math.random() * 7), b = 3 + Math.floor(Math.random() * 7);
     render('gate', `<div class="screen"><div class="topbar"><button class="icon-btn" data-act="home">🏠</button></div>
-      <div class="gate"><div class="card"><b>어른 확인</b><div style="font-size:40px;font-weight:900">${a} × ${b} = ?</div>
-      <input id="ans" inputmode="numeric" autocomplete="off"><button class="btn primary" data-act="ok">확인</button></div></div></div>`, {
+      <div class="gate"><div class="card"><b>🔒 아빠 화면 암호</b><p class="muted">암호를 입력하세요</p>
+      <input id="ans" class="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" aria-label="암호">
+      <button class="btn primary" data-act="ok">확인</button>
+      <button class="btn small" data-act="forgot">암호를 잊었어요</button></div></div></div>`, {
       home: homeScreen,
-      ok: () => { if (+document.getElementById('ans').value === a * b) next(); else { toast('다시 계산해 보세요'); gateScreen(next); } },
+      ok: () => {
+        const i = document.getElementById('ans');
+        if (i && i.value.trim() && i.value.trim() === parentPin()) { pTab = 'summary'; const t = document.getElementById('toast'); if (t) t.classList.remove('show'); next(); }
+        else { toast('암호가 달라요'); if (i) { i.value = ''; i.focus(); } }
+      },
+      forgot: () => pinResetScreen(next),
     });
-    setTimeout(() => { const i = document.getElementById('ans'); if (i) { i.focus(); i.addEventListener('keydown', e => { if (e.key === 'Enter') H.ok(); }); } }, 50);
+    gateFocus();
   }
+  function pinResetScreen(next) {
+    const a = 12 + Math.floor(Math.random() * 28), b = 12 + Math.floor(Math.random() * 18);
+    render('pinreset', `<div class="screen"><div class="topbar"><button class="icon-btn" data-act="home">🏠</button></div>
+      <div class="gate"><div class="card"><b>암호 되돌리기 (어른 확인)</b><p class="muted">맞히면 암호가 ${DEFAULT_PIN}로 돌아가요</p>
+      <div style="font-size:40px;font-weight:900">${a} × ${b} = ?</div>
+      <input id="ans" inputmode="numeric" autocomplete="off"><button class="btn primary" data-act="ok">확인</button>
+      <button class="btn small" data-act="back">암호 입력으로</button></div></div></div>`, {
+      home: homeScreen,
+      back: () => gateScreen(next),
+      ok: () => {
+        if (+document.getElementById('ans').value === a * b) { S.settings.parentPin = DEFAULT_PIN; save(); pTab = 'settings'; next(); toast(`암호를 ${DEFAULT_PIN}로 되돌렸어요. 새 암호로 바꿔 주세요`); }
+        else { toast('다시 계산해 보세요'); pinResetScreen(next); }
+      },
+    });
+    gateFocus();
+  }
+  const PTABS = [['summary', '📊', '요약'], ['stats', '📈', '통계'], ['reward', '🎁', '보상·별'], ['progress', '📚', '학습·진도'], ['settings', '⚙️', '설정'], ['manage', '🛠️', '백업·업데이트']];
+  let pTab = 'summary';
+  const ptabBar = () => `<nav class="ptabs" role="tablist" aria-label="아빠 화면 메뉴">${PTABS.map(([k, i, n]) => `<button class="ptab${pTab === k ? ' on' : ''}" role="tab" aria-selected="${pTab === k}" data-act="ptab" data-arg="${k}"><span aria-hidden="true">${i}</span>${n}</button>`).join('')}</nav>`;
+  const ptabPanel = (k, html) => `<section class="ppanel" role="tabpanel" data-panel="${k}"${pTab === k ? '' : ' hidden'}>${html}</section>`;
+  function ptabSwitch(k) {
+    if (!PTABS.some(t => t[0] === k)) return; pTab = k;
+    document.querySelectorAll('.ptab').forEach(b => { const on = b.dataset.arg === k; b.classList.toggle('on', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    document.querySelectorAll('.ppanel').forEach(p => { p.hidden = p.dataset.panel !== k; });
+    window.scrollTo(0, 0); ptabReveal(true);
+  }
+  // 폰에서 켜진 탭이 탭 바 밖으로 밀리지 않게
+  function ptabReveal(smooth) { const on = document.querySelector('.ptab.on'); if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: smooth ? 'smooth' : 'auto' }); }
+  let statDays = 7;
+  const WD = ['일', '월', '화', '수', '목', '금', '토'];
+  function statRows(n) {
+    const out = [];
+    for (let i = 0; i < n; i++) { const d = addDays(-i); const l = S.log[d] || {}; out.push({ d, min: Math.round((l.sec || 0) / 60), app: l.app != null ? Math.round(l.app / 60) : null, stars: l.stars || 0 }); }
+    return out;
+  }
+  function statsCard() {
+    const rows = statRows(statDays); const act = rows.filter(r => r.min > 0 || r.stars > 0); const td = today();
+    const totMin = rows.reduce((s, r) => s + r.min, 0), totStar = rows.reduce((s, r) => s + r.stars, 0), maxStar = Math.max(0, ...rows.map(r => r.stars));
+    const avg = act.length ? Math.round(totMin / act.length) : 0;
+    const maxMin = Math.max(Number(S.settings.dailyLimit) || 20, ...rows.map(r => r.min), 1);
+    const dl = d => { const x = new Date(d + 'T12:00:00'); return `${x.getMonth() + 1}/${x.getDate()} (${WD[x.getDay()]})`; };
+    return `<div class="card" id="statsCard"><h3>📈 날짜별 학습 시간·얻은 별</h3>
+      <div class="row stat-range">${[7, 14, 30].map(n => `<button class="btn small${statDays === n ? ' primary' : ''}" data-act="statdays" data-arg="${n}">최근 ${n}일</button>`).join('')}</div>
+      <div class="kv" style="margin-top:12px"><div>학습한 날<b>${act.length}일</b></div><div>총 학습 시간<b>${totMin}분</b></div><div>하루 평균<b>${avg}분</b></div><div>얻은 별<b>${totStar}개</b></div><div>하루 최고 별<b>${maxStar}개</b></div></div>
+      <ul class="stat-list">${rows.map(r => `<li class="stat-row${r.d === td ? ' today' : ''}${r.min || r.stars ? '' : ' empty'}" data-date="${r.d}"><span class="stat-date">${dl(r.d)}${r.d === td ? ' · 오늘' : ''}</span>
+        <div class="stat-bars"><div class="stat-bar min"><i style="width:${Math.min(100, Math.round(r.min / maxMin * 100))}%"></i><b>⏱️ ${r.min}분</b>${r.app != null && r.app > r.min ? `<small>앱 켠 시간 ${r.app}분</small>` : ''}</div>
+        <div class="stat-bar star"><i style="width:${Math.min(100, Math.round(r.stars / DAY_STAR_MAX * 100))}%"></i><b>⭐ ${r.stars}개</b></div></div></li>`).join('')}</ul>
+      <p class="muted">학습 시간은 문제 푸는 화면에 있던 시간이에요 (하루 시간 제한 ${esc(S.settings.dailyLimit)}분과 같은 기준). “앱 켠 시간”은 아빠 화면을 뺀 전체 시간이에요 (이 버전부터 기록). 별은 그날 문제와 하루 끝 보너스로 얻은 별이에요 (하루 최대 ${DAY_STAR_MAX}개, 아빠가 조정한 별은 빼요).</p></div>`;
+  }
+  function pinCard() {
+    const isDef = parentPin() === DEFAULT_PIN;
+    return `<div class="card" id="pinCard"><h3>🔒 아빠 화면 암호</h3>
+      <p>${isDef ? `⚠️ 지금은 기본 암호(<b>${DEFAULT_PIN}</b>)예요. 윤이가 모르는 암호로 바꿔 주세요.` : '✅ 새 암호가 설정되어 있어요.'}</p>
+      <div class="form"><label>새 암호 (숫자 4~8자리)<input id="pinNew" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password"></label>
+        <label>새 암호 한 번 더<input id="pinNew2" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="new-password"></label></div>
+      <div class="row" style="margin-top:10px;flex-wrap:wrap"><button class="btn small primary" data-act="setpin">암호 바꾸기</button></div>
+      <p class="muted">암호를 잊으면 암호 화면의 “암호를 잊었어요”에서 어른용 곱셈 문제를 풀어 ${DEFAULT_PIN}로 되돌릴 수 있어요. 전체 초기화를 해도 ${DEFAULT_PIN}로 돌아가요.</p></div>`;
+  }
+  function setPin() {
+    const a = ((document.getElementById('pinNew') || {}).value || '').trim(), b = ((document.getElementById('pinNew2') || {}).value || '').trim();
+    if (!/^\d{4,8}$/.test(a)) return toast('숫자 4~8자리로 적어주세요');
+    if (a !== b) return toast('두 번 적은 암호가 달라요');
+    S.settings.parentPin = a; save(); parentScreen(); toast('암호를 바꿨어요');
+  }
+  const parentCommonHandlers = () => ({ ptab: k => ptabSwitch(k), statdays: n => { statDays = +n || 7; parentScreen(); }, setpin: setPin });
   function restore(txt) {
     txt = String(txt || '').trim(); let o = null;
     try { o = JSON.parse(txt); } catch (e) { try { o = JSON.parse(decodeURIComponent(escape(atob(txt)))); } catch (e2) { o = null; } }
@@ -1444,10 +1524,8 @@ window.HANGUL = (() => {
     const chk = (key, label) => `<label class="chk"><input type="checkbox" data-set="${key}"${st[key] ? ' checked' : ''}>${label}</label>`;
     render('parent', `<div class="screen"><div class="parent">
       <div class="topbar"><button class="icon-btn" data-act="home">🏠</button><h2 class="title">아빠 화면</h2><div class="spacer"></div><button class="btn small" data-act="rewardadmin">🎁 보상</button><button class="btn small" data-act="spec">📋 기획·변경 기록</button><span class="muted">v${APP_VERSION}</span></div>
-      <div class="card"><h3>🎁 받은 보상 관리</h3>
-        <p>받은 보상 <b>${rwCount().n}개</b> · 아직 안 쓴 보상 <b>${rwCount().left}개</b> · 사용완료 ${rwCount().u}개</p>
-        <button class="btn primary" data-act="rewardadmin">🎁 보상 목록 · 사용완료 체크</button>
-      </div>
+      ${ptabBar()}
+      ${ptabPanel('summary', `
       <div class="card"><h3>이번 주 (최근 7일)</h3><div class="kv">
         <div>학습한 날<b>${days7}일</b></div><div>새로 익힌 낱말<b>${learned7}개</b></div><div>오늘 사용<b>${min}분</b></div><div>연속<b>${streak()}일</b></div>
       </div>
@@ -1456,6 +1534,22 @@ window.HANGUL = (() => {
       <div class="card"><h3>전체</h3><div class="kv">
         <div>누적 학습일<b>${S.days.length}일</b></div><div>익힌 낱말<b>${learnedAll}개</b></div><div>받아쓰기 문장<b>${S.dictCount || 0}개</b></div><div>받아쓰기 급수<b>${S.grade}급</b></div><div>별<b>${S.stars}개</b></div><div>스티커<b>${Object.keys(S.stickers).length} / ${READY.length}</b></div>
       </div></div>
+      `)}
+      ${ptabPanel('stats', `
+      ${statsCard()}
+      `)}
+      ${ptabPanel('reward', `
+      <div class="card"><h3>🎁 받은 보상 관리</h3>
+        <p>받은 보상 <b>${rwCount().n}개</b> · 아직 안 쓴 보상 <b>${rwCount().left}개</b> · 사용완료 ${rwCount().u}개</p>
+        <button class="btn primary" data-act="rewardadmin">🎁 보상 목록 · 사용완료 체크</button>
+      </div>
+      <div class="card"><h3>별 조정</h3>
+        <p>지금 별: <b style="font-size:24px">${S.stars}개</b> <span class="muted">(현재 목표에 모은 별 ${Math.max(0, S.stars - S.goalBase)}개 · 오늘 ${todayLog().stars}개 / 하루 최대 ${DAY_STAR_MAX}개)</span></p>
+        <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="star" data-arg="-10">−10</button><button class="btn small" data-act="star" data-arg="-1">−1</button><button class="btn small" data-act="star" data-arg="1">+1</button><button class="btn small" data-act="star" data-arg="10">+10</button></div>
+        <div class="code-row" style="margin-top:10px"><input id="starSet" type="number" min="0" placeholder="개수"><button class="btn small primary" data-act="starset">이 개수로 맞추기</button></div>
+      </div>
+      `)}
+      ${ptabPanel('progress', `
       <div class="card"><h3>📝 우리 반 받아쓰기</h3>
         <p class="muted">학교에서 받은 받아쓰기 문장을 넣고 시험 날짜를 정하면, 시험 날까지 매일 받아쓰기 단계가 이 문장으로 바뀌어요 (틀린 문장 먼저). 홈의 “우리 반 받아쓰기” 버튼으로 언제든 연습할 수 있어요.</p>
         <div class="form">
@@ -1468,22 +1562,6 @@ window.HANGUL = (() => {
         <p class="muted">🎙 녹음을 누르고 선생님처럼 또박또박 불러준 뒤 ⏹ 멈추기를 누르세요. 녹음이 있으면 태블릿 음성 대신 녹음을 틀어줘요. 녹음은 이 태블릿 안에만 저장돼요 (백업 파일에는 들어가지 않아요).</p>
         <div id="clsRows">${clsRowsHtml()}</div>
         <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="hundred">💯 학교 받아쓰기 100점 스티커 주기</button></div>
-      </div>
-      <div class="card"><h3>채점 설정</h3><div class="form">
-        ${chk('spaceOn', '급수 받아쓰기에서 띄어쓰기 채점')}
-        <label>띄어쓰기 채점 시작<select data-set="spaceFrom" data-num="1">${gOpts.map(g => `<option value="${g}"${Number(st.spaceFrom) === g ? ' selected' : ''}>${g}급부터</option>`).join('')}</select></label>
-        ${chk('punctOn', '급수 받아쓰기에서 문장부호 채점')}
-        <label>문장부호 채점 시작<select data-set="punctFrom" data-num="1">${gOpts.map(g => `<option value="${g}"${Number(st.punctFrom) === g ? ' selected' : ''}>${g}급부터</option>`).join('')}</select></label>
-        ${chk('classSpace', '우리 반 받아쓰기에서 띄어쓰기 채점')}
-        ${chk('classPunct', '우리 반 받아쓰기에서 문장부호 채점')}
-        <label>불러주기 횟수${sel('listenMax', [[0, '무제한 (연습)'], [2, '2번만 (시험처럼)']], st.listenMax)}</label>
-        <label>받아쓰기 읽기 속도${sel('dictRate', [[0.65, '아주 천천히'], [0.8, '천천히 (추천)'], [0.9, '보통']], st.dictRate)}</label>
-      </div></div>
-      <div class="card"><h3>앱 업데이트</h3>
-        <p>이 기기의 앱: <b>v${APP_VERSION}</b> <span id="verInfo" class="muted">${latestVer ? (isNewer(latestVer, APP_VERSION) ? `· 새 버전 v${latestVer}이 있어요!` : '· 최신 버전이에요') : ''}</span></p>
-        <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="checkver">🔄 새 버전 확인</button>
-          <button class="btn small primary" data-act="doupdate" id="updBtn"${latestVer && isNewer(latestVer, APP_VERSION) ? '' : ' hidden'}>⬇️ 지금 업데이트</button></div>
-        <p class="muted">업데이트해도 진도·별·보상·설정은 그대로 남아요. 인터넷이 연결돼 있어야 해요.</p>
       </div>
       <div class="card"><h3>진도 조정</h3>
         <p>지금 진도: <b>${esc(unitOf(S.pos.u).title)} ${S.pos.d}일차 · ${STEPS[S.pos.s].name}</b> <span class="muted">(코드 ${code})</span> · 받아쓰기 <b>${S.grade}급</b></p>
@@ -1498,20 +1576,18 @@ window.HANGUL = (() => {
           <button class="btn small" data-act="resetprog" id="resetProgBtn">진도 초기화</button></div>
         <p class="muted">일차는 단원 길이에 맞춰 줄어들어요. 진도 초기화: 진도·완료한 날·스티커·급수·어려운 말 상자·정답률을 처음으로 돌려요. 별·받은 보상·설정·우리 반 문장은 그대로예요.</p>
       </div>
-      <div class="card"><h3>별 조정</h3>
-        <p>지금 별: <b style="font-size:24px">${S.stars}개</b> <span class="muted">(현재 목표에 모은 별 ${Math.max(0, S.stars - S.goalBase)}개 · 오늘 ${todayLog().stars}개 / 하루 최대 ${DAY_STAR_MAX}개)</span></p>
-        <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="star" data-arg="-10">−10</button><button class="btn small" data-act="star" data-arg="-1">−1</button><button class="btn small" data-act="star" data-arg="1">+1</button><button class="btn small" data-act="star" data-arg="10">+10</button></div>
-        <div class="code-row" style="margin-top:10px"><input id="starSet" type="number" min="0" placeholder="개수"><button class="btn small primary" data-act="starset">이 개수로 맞추기</button></div>
-      </div>
-      <div class="card"><h3>진도 옮기기·백업</h3>
-        <p>이 기기의 현재 진도 코드: <b style="font-size:24px">${code}</b> <span class="muted">(단원-일차-단계)</span></p>
-        <div class="code-row"><input id="pcode" placeholder="예: 3-2-1"><button class="btn small primary" data-act="setpos">이 진도로 맞추기</button></div>
-        <p class="muted">별·스티커·복습 기록까지 모두 옮기려면 아래 백업 코드를 복사해 다른 기기의 같은 칸에 붙여넣고 “가져오기”를 누르세요.</p>
-        <textarea id="backup" placeholder="백업 코드"></textarea>
-        <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn small" data-act="export">내보내기(복사)</button><button class="btn small" data-act="import">가져오기</button>
-          <button class="btn small" data-act="savefile">💾 백업 파일 저장</button><label class="btn small" style="cursor:pointer">📂 백업 파일 불러오기<input type="file" id="loadFile" accept=".json,application/json,text/plain" hidden></label></div>
-        <p class="muted">앱을 지웠다 다시 설치하기 전에는 “백업 파일 저장”을 꼭 눌러두세요. 영어·수학 앱과는 저장이 따로예요.</p>
-      </div>
+      `)}
+      ${ptabPanel('settings', `
+      <div class="card"><h3>채점 설정</h3><div class="form">
+        ${chk('spaceOn', '급수 받아쓰기에서 띄어쓰기 채점')}
+        <label>띄어쓰기 채점 시작<select data-set="spaceFrom" data-num="1">${gOpts.map(g => `<option value="${g}"${Number(st.spaceFrom) === g ? ' selected' : ''}>${g}급부터</option>`).join('')}</select></label>
+        ${chk('punctOn', '급수 받아쓰기에서 문장부호 채점')}
+        <label>문장부호 채점 시작<select data-set="punctFrom" data-num="1">${gOpts.map(g => `<option value="${g}"${Number(st.punctFrom) === g ? ' selected' : ''}>${g}급부터</option>`).join('')}</select></label>
+        ${chk('classSpace', '우리 반 받아쓰기에서 띄어쓰기 채점')}
+        ${chk('classPunct', '우리 반 받아쓰기에서 문장부호 채점')}
+        <label>불러주기 횟수${sel('listenMax', [[0, '무제한 (연습)'], [2, '2번만 (시험처럼)']], st.listenMax)}</label>
+        <label>받아쓰기 읽기 속도${sel('dictRate', [[0.65, '아주 천천히'], [0.8, '천천히 (추천)'], [0.9, '보통']], st.dictRate)}</label>
+      </div></div>
       <div class="card"><h3>설정</h3><div class="form">
         <label>부르는 이름<input data-set="childName" value="${esc(st.childName)}"></label>
         <label>로봇 친구 이름<input data-set="robotName" value="${esc(st.robotName)}"></label>
@@ -1528,6 +1604,24 @@ window.HANGUL = (() => {
         <button class="btn small" data-act="gave">🎁 보상 줬어요 (목표 새로 시작)</button>
         <button class="btn small" data-act="reset" id="resetBtn">전체 초기화 (별·보상·설정까지)</button>
       </div></div>
+      ${pinCard()}
+      `)}
+      ${ptabPanel('manage', `
+      <div class="card"><h3>앱 업데이트</h3>
+        <p>이 기기의 앱: <b>v${APP_VERSION}</b> <span id="verInfo" class="muted">${latestVer ? (isNewer(latestVer, APP_VERSION) ? `· 새 버전 v${latestVer}이 있어요!` : '· 최신 버전이에요') : ''}</span></p>
+        <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="checkver">🔄 새 버전 확인</button>
+          <button class="btn small primary" data-act="doupdate" id="updBtn"${latestVer && isNewer(latestVer, APP_VERSION) ? '' : ' hidden'}>⬇️ 지금 업데이트</button></div>
+        <p class="muted">업데이트해도 진도·별·보상·설정은 그대로 남아요. 인터넷이 연결돼 있어야 해요.</p>
+      </div>
+      <div class="card"><h3>진도 옮기기·백업</h3>
+        <p>이 기기의 현재 진도 코드: <b style="font-size:24px">${code}</b> <span class="muted">(단원-일차-단계)</span></p>
+        <div class="code-row"><input id="pcode" placeholder="예: 3-2-1"><button class="btn small primary" data-act="setpos">이 진도로 맞추기</button></div>
+        <p class="muted">별·스티커·복습 기록까지 모두 옮기려면 아래 백업 코드를 복사해 다른 기기의 같은 칸에 붙여넣고 “가져오기”를 누르세요.</p>
+        <textarea id="backup" placeholder="백업 코드"></textarea>
+        <div class="row" style="margin-top:8px;flex-wrap:wrap"><button class="btn small" data-act="export">내보내기(복사)</button><button class="btn small" data-act="import">가져오기</button>
+          <button class="btn small" data-act="savefile">💾 백업 파일 저장</button><label class="btn small" style="cursor:pointer">📂 백업 파일 불러오기<input type="file" id="loadFile" accept=".json,application/json,text/plain" hidden></label></div>
+        <p class="muted">앱을 지웠다 다시 설치하기 전에는 “백업 파일 저장”을 꼭 눌러두세요. 영어·수학 앱과는 저장이 따로예요.</p>
+      </div>
       <div class="card"><h3>콘텐츠 점검</h3>
         ${cw.warn.length ? `<ul class="list warn">${cw.warn.map(x => `<li>⚠️ ${esc(x)}</li>`).join('')}</ul>` : '<p>✅ 모든 낱말이 단원 규칙에 맞아요.</p>'}
         ${cw.note.length ? `<details><summary class="muted">참고 ${cw.note.length}개</summary><ul class="list">${cw.note.map(x => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}
@@ -1538,7 +1632,9 @@ window.HANGUL = (() => {
         <li>태블릿 음성이 어색하게 읽는 문장은 우리 반 받아쓰기에 넣고 🎙 녹음하면 아빠 목소리로 바뀌어요.</li>
         <li>윤이 자판에는 자동완성·맞춤법 고침이 없어요. 태블릿 기본 키보드는 쓰지 않아요.</li>
       </ul></div>
+      `)}
     </div></div>`, {
+      ...parentCommonHandlers(),
       home: homeScreen,
       clssave: () => {
         const lines = document.getElementById('clsText').value.split('\n').map(normText).filter(Boolean).slice(0, 20);
@@ -1596,6 +1692,7 @@ window.HANGUL = (() => {
       gave: () => { S.rewards.push({ date: today(), text: S.settings.goalText, stars: Number(S.settings.goalStars) }); S.goalBase = S.stars; save(); toast('보상을 기록했어요. 새 목표를 시작해요!'); parentScreen(); },
       reset: (x, btn) => { if (btn.dataset.sure) { S = defaults(); save(); toast('초기화했어요'); homeScreen(); } else { btn.dataset.sure = 1; btn.textContent = '정말 초기화? 한 번 더 누르기'; } },
     });
+    ptabReveal();
     const lf = document.getElementById('loadFile');
     if (lf) lf.addEventListener('change', () => { const f = lf.files[0]; if (!f) return; f.text().then(txt => { if (restore(txt)) { toast('백업을 불러왔어요!'); parentScreen(); } else toast('백업 파일이 올바르지 않아요'); }); });
     document.querySelectorAll('[data-set]').forEach(el => el.addEventListener('change', () => {

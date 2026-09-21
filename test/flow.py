@@ -52,6 +52,19 @@ def scan_bad(page, where):
     red = run_js(page, """() => [...document.querySelectorAll('.stage *')].some(e => { const c = getComputedStyle(e).color; const m = c.match(/\\d+/g); return m && +m[0] > 200 && +m[1] < 60 && +m[2] < 60; })""")
     return bad, red
 
+def type_text(page, txt):
+    for k in run_js(page, "t => HANGUL.keysFor(t)", txt):
+        if k == ' ': page.click('[data-act=sp]')
+        else: page.click(f'.key[data-arg="{k}"]')
+
+def dict_wrong(page, times):
+    """받아쓰기에서 times번 틀리게 쓰고 지워요"""
+    for k in range(times):
+        type_text(page, '가나다'); page.click('[data-act=submit]'); page.wait_for_timeout(250)
+        n = run_js(page, "() => document.querySelectorAll('#grid .cell:not(.empty)').length")
+        page.click('[data-act=curend]')
+        for _ in range(n + 1): page.click('[data-act=bs]')
+
 def answer(page, a, wrong_first=0):
     """현재 문제를 맞게 풀어요. wrong_first번 먼저 틀려요."""
     t = a['type']
@@ -76,17 +89,8 @@ def answer(page, a, wrong_first=0):
             page.locator(f'.tcard:not(.used)[data-arg="{tok}"]').first.click(); page.wait_for_timeout(30)
         return
     if t == 'dict':
-        def type_text(txt):
-            for k in run_js(page, "t => HANGUL.keysFor(t)", txt):
-                if k == ' ': page.click('[data-act=sp]')
-                else: page.click(f'.key[data-arg="{k}"]')
-        for k in range(wrong_first):
-            type_text('가나다'); page.click('[data-act=submit]'); page.wait_for_timeout(250)
-            # 지우기
-            n = run_js(page, "() => document.querySelectorAll('#grid .cell:not(.empty)').length")
-            page.click('[data-act=curend]')
-            for _ in range(n + 1): page.click('[data-act=bs]')
-        type_text(a['text']); page.click('[data-act=submit]'); return
+        dict_wrong(page, wrong_first)
+        type_text(page, a['text']); page.click('[data-act=submit]'); return
     if t == 'fix':
         W = list(a['w']['word'])
         for i in a['bad']:
@@ -184,21 +188,149 @@ with sync_playwright() as p:
         day2 = run_js(page, "() => { const S = YUNI.state; return S.log[Object.keys(S.log).pop()] }")
         check(f'[{dev}] 한 번에 다 맞힌 날 별 {day2["stars"]}개 (문제 16 + 보너스 3)', r2['end'] == 'reward' and 15 <= day2['stars'] <= 19, json.dumps(day2))
 
+        # --- KREQ-64 (공통 64번) 별: 몇 번 만에 맞혀도 1개, 정답 본 뒤 따라 써도 1개, 넘어가면 0개, 문제당 한 번만 ---
+        run_js(page, "() => { YUNI.state.log = {}; YUNI.state.pos = {u: 0, d: 1, s: 0}; }")
+        page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        stars = lambda: run_js(page, "() => YUNI.state.stars")
+        k64 = {}
+        for attempt in range(2):
+            page.click('[data-act=go]'); cur = wait_change(page, '')
+            n = 0
+            while cur and cur != 'reward' and n < 60 and len(k64) < 4:
+                n += 1
+                a = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.act))")
+                s0 = stars()
+                if a['type'] == 'pick' and 'retry' not in k64:
+                    answer(page, a, 1); cur2 = wait_change(page, cur, 12000)
+                    k64['retry'] = (stars() - s0, a['w']['word'])
+                    s1 = stars(); page.click('[data-act=prev]'); page.wait_for_timeout(200)
+                    ab = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.act))"); answer(page, ab); wait_change(page, act_id(page), 12000)
+                    k64['retry_again'] = (stars() - s1, ab.get('w', {}).get('word'))
+                    cur = act_id(page); continue
+                if a['type'] == 'dict' and 'copy' not in k64:
+                    dict_wrong(page, 3); page.wait_for_timeout(400)
+                    vis = run_js(page, "() => { const r = document.getElementById('skipRow'); return !!r && !r.hidden && r.getClientRects().length > 0; }")
+                    h = run_js(page, "() => document.getElementById('hint').textContent")
+                    page.screenshot(path=f'{SHOT}/{dev}_64_reveal.png')
+                    type_text(page, a['text']); page.click('[data-act=submit]')
+                    h2 = run_js(page, "() => document.getElementById('hint').textContent")
+                    cur = wait_change(page, cur, 12000)
+                    k64['copy'] = (stars() - s0, vis, h, h2)
+                    continue
+                if a['type'] == 'dict' and 'skip' not in k64:
+                    dict_wrong(page, 3); page.wait_for_timeout(400)
+                    page.click('[data-act=skip]'); nxt = wait_change(page, cur, 12000)
+                    d_skip = stars() - s0
+                    s1 = stars(); page.click('[data-act=prev]'); page.wait_for_timeout(250)
+                    ab = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.act))"); answer(page, ab); wait_change(page, act_id(page), 12000)
+                    k64['skip'] = (d_skip, stars() - s1, ab.get('text') == a['text'])
+                    cur = act_id(page); continue
+                answer(page, a); cur = wait_change(page, cur, 12000)
+            if cur != 'reward': page.click('[data-act=quit]'); page.wait_for_selector('.go-btn')
+            else: page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+            if len(k64) >= 4: break
+            run_js(page, "() => { YUNI.state.pos = {u: 0, d: 2, s: 3}; }")
+        r_ = k64.get('retry', (None,)); ra = k64.get('retry_again', (None,)); cp_ = k64.get('copy', (None, False, '', '')); sk = k64.get('skip', (None, None, False))
+        check(f'[{dev}] KREQ-18/64 두 번째 시도에 맞히면 별 +1 (바른 글자 고르기)', r_[0] == 1, str(r_))
+        check(f'[{dev}] KREQ-18/64 같은 문제(◀ 이전)는 두 번 별 없음', ra[0] == 0 and ra[1] == r_[-1], str(ra))
+        check(f'[{dev}] KREQ-64 정답 보여줄 때 "다음 ▶"과 "정답을 따라 쓰면 별을 받아요" 안내', cp_[1] and '정답을 따라 쓰면 별을 받아요' in cp_[2], str(cp_))
+        check(f'[{dev}] KREQ-64 정답 본 뒤 맞게 따라 쓰면 별 +1 ("잘 따라 썼어요! ⭐")', cp_[0] == 1 and '⭐' in cp_[3], str(cp_))
+        check(f'[{dev}] KREQ-64 "다음 ▶"으로 넘어가면 별 0, ◀ 이전으로 와서 맞혀도 별 0', sk[0] == 0 and sk[1] == 0 and sk[2], str(sk))
+
         # 받아쓰기 음성: 띄어 읽기 단위로 끊어서 천천히 (0.8)
         run_js(page, "() => { window.__spoken = []; }")
         # --- 아빠 화면 ---
-        page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        if not run_js(page, "() => !!document.querySelector('.go-btn')"): page.click('[data-act=home]')
+        page.wait_for_selector('.go-btn')
         page.click('[data-act=parent]'); page.wait_for_selector('#ans')
-        prob = run_js(page, "() => document.querySelector('.gate b + div').textContent")
-        x, y = [int(v) for v in re.findall(r'\d+', prob)]
-        page.fill('#ans', str(x * y)); page.click('[data-act=ok]'); page.wait_for_selector('.parent')
-        txt = run_js(page, "() => document.body.innerText")
-        for need, rid in [('곱셈', None), ('진도 조정', 'KREQ-14'), ('진도 초기화', 'KREQ-14'), ('별 조정', 'KREQ-14'), ('받은 보상', 'KREQ-15'), ('백업 파일 저장', 'KREQ-16'), ('새 버전 확인', 'KREQ-23'),
+        page.screenshot(path=f'{SHOT}/{dev}_49_gate.png')
+        gate_txt = run_js(page, "() => document.querySelector('.gate').innerText")
+        # KREQ-61 암호 잠금: 틀린 암호는 안 열리고 1234로 열려요
+        page.fill('#ans', '0000'); page.click('[data-act=ok]'); page.wait_for_timeout(250)
+        wrong_ok = run_js(page, "() => !document.querySelector('.parent') && !!document.querySelector('#ans')")
+        page.fill('#ans', '1234'); page.click('[data-act=ok]'); page.wait_for_selector('.parent', timeout=3000)
+        check(f'[{dev}] KREQ-61 틀린 암호(0000)는 안 열리고 기본 암호 1234로 열림', wrong_ok and run_js(page, "() => !!document.querySelector('.parent') && YUNI.state.settings.parentPin === '1234'"))
+        check(f'[{dev}] KREQ-61 암호 화면: 곱셈 문제 없이 가려진 암호칸 + "암호를 잊었어요"', not re.search(r'\d+\s*×\s*\d+', gate_txt) and '암호를 잊었어요' in gate_txt, gate_txt)
+        txt = run_js(page, "() => document.querySelector('.parent').textContent")
+        for need, rid in [('진도 조정', 'KREQ-14'), ('진도 초기화', 'KREQ-14'), ('별 조정', 'KREQ-14'), ('받은 보상', 'KREQ-15'), ('백업 파일 저장', 'KREQ-16'), ('새 버전 확인', 'KREQ-23'),
                           ('기획·변경 기록', 'KREQ-21'), ('우리 반 받아쓰기', 'KREQ-41'), ('규칙별 정답률', 'KREQ-47'), ('어려운 말 목록', 'KREQ-47'), ('채점 설정', 'KREQ-43'), ('100점 스티커', 'KREQ-41'), ('하루 최대 시간', 'KREQ-11')]:
             if rid: check(f'[{dev}] {rid} 아빠 화면: {need}', need in txt)
         check(f'[{dev}] KREQ-40 콘텐츠 점검 경고 없음', run_js(page, "() => YUNI.contentWarnings().warn.length") == 0, json.dumps(run_js(page, "() => YUNI.contentWarnings().warn"), ensure_ascii=False))
         page.screenshot(path=f'{SHOT}/{dev}_50_parent.png', full_page=False)
-        # 우리 반 받아쓰기 입력
+        vis_panels = "() => [...document.querySelectorAll('.ppanel')].filter(p => !p.hidden && getComputedStyle(p).display !== 'none' && p.getClientRects().length).map(p => p.dataset.panel)"
+        # --- KREQ-63 탭 메뉴 6개, 패널은 하나만 ---
+        tabs = run_js(page, "() => [...document.querySelectorAll('.ptabs .ptab')].map(b => b.dataset.arg)")
+        check(f'[{dev}] KREQ-63 탭 6개 (요약·통계·보상·별·학습·진도·설정·백업·업데이트)', tabs == ['summary', 'stats', 'reward', 'progress', 'settings', 'manage'], str(tabs))
+        check(f'[{dev}] KREQ-63 처음엔 요약 패널 하나만 보임', run_js(page, vis_panels) == ['summary'], str(run_js(page, vis_panels)))
+        sw_ok, sw_info, hscroll = True, [], []
+        for k in tabs:
+            page.click(f'.ptab[data-arg="{k}"]'); page.wait_for_timeout(120)
+            vp_ = run_js(page, vis_panels); on = run_js(page, "() => [...document.querySelectorAll('.ptab.on')].map(b => b.dataset.arg)")
+            if vp_ != [k] or on != [k]: sw_ok = False; sw_info.append(f'{k}:{vp_}/{on}')
+            if not run_js(page, "() => document.scrollingElement.scrollWidth <= innerWidth + 1"): hscroll.append(k)
+            page.screenshot(path=f'{SHOT}/{dev}_5{tabs.index(k)+2}_tab_{k}.png')
+        check(f'[{dev}] KREQ-63 탭을 누르면 그 패널 하나만 보임', sw_ok, ','.join(sw_info))
+        check(f'[{dev}] KREQ-01 아빠 화면 모든 탭 가로 넘침 없음', not hscroll, ','.join(hscroll))
+        page.click('.ptab[data-arg="reward"]'); s0 = run_js(page, "() => YUNI.state.stars")
+        page.click('[data-act=star][data-arg="1"]'); page.wait_for_timeout(150)
+        check(f'[{dev}] KREQ-63 별 +1 (화면 다시 그림) 뒤에도 보상·별 탭 유지', run_js(page, "() => YUNI.state.stars") == s0 + 1 and run_js(page, vis_panels) == ['reward'] and run_js(page, "() => document.querySelector('.ptab.on').dataset.arg") == 'reward')
+        page.click('[data-act=star][data-arg="-1"]'); page.wait_for_timeout(100)
+        # --- KREQ-62 날짜별 통계 ---
+        seed = run_js(page, """() => { const S = YUNI.state; const p = n => String(n).padStart(2, '0'); const f = n => { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; };
+          S.log[f(1)] = { sec: 600, stars: 12, bonus: 1 }; S.log[f(3)] = { sec: 1260, stars: 25, app: 1800 }; S.log[f(10)] = { sec: 300, stars: 7 }; return { d1: f(1), d3: f(3), d10: f(10) }; }""")
+        page.click('.ptab[data-arg="stats"]'); page.click('[data-act=statdays][data-arg="7"]'); page.wait_for_timeout(120)
+        rows = run_js(page, "() => [...document.querySelectorAll('.stat-list .stat-row')].map(r => ({d: r.dataset.date, t: r.textContent}))")
+        rt = {r['d']: r['t'] for r in rows}
+        check(f'[{dev}] KREQ-62 통계 탭 최근 7일 = 7줄, 날짜별 분·별 (어제 10분·12개, 3일 전 21분·25개·앱 30분)', len(rows) == 7 and run_js(page, vis_panels) == ['stats']
+              and '10분' in rt.get(seed['d1'], '') and '12개' in rt.get(seed['d1'], '') and '21분' in rt.get(seed['d3'], '') and '25개' in rt.get(seed['d3'], '') and '앱 켠 시간 30분' in rt.get(seed['d3'], '') and seed['d10'] not in rt,
+              json.dumps(rows[:4], ensure_ascii=False))
+        page.screenshot(path=f'{SHOT}/{dev}_53_tab_stats_seeded.png')
+        page.click('[data-act=statdays][data-arg="14"]'); page.wait_for_timeout(120)
+        n14 = run_js(page, "() => document.querySelectorAll('.stat-list .stat-row').length"); t14 = run_js(page, f"() => (document.querySelector('.stat-row[data-date=\"{seed['d10']}\"]') || {{}}).textContent || ''")
+        page.click('[data-act=statdays][data-arg="30"]'); page.wait_for_timeout(120)
+        n30 = run_js(page, "() => document.querySelectorAll('.stat-list .stat-row').length")
+        check(f'[{dev}] KREQ-62 14일·30일 버튼 → 14줄·30줄, 탭 유지', n14 == 14 and '5분' in t14 and '7개' in t14 and n30 == 30 and run_js(page, vis_panels) == ['stats'], f'{n14},{n30},{t14}')
+        page.click('[data-act=statdays][data-arg="7"]'); page.wait_for_timeout(80)
+        # --- KREQ-61 암호 바꾸기 (설정 탭) ---
+        page.click('.ptab[data-arg="settings"]')
+        page.fill('#pinNew', '5678'); page.fill('#pinNew2', '5679'); page.click('[data-act=setpin]'); page.wait_for_timeout(120)
+        mismatch_ok = run_js(page, "() => YUNI.state.settings.parentPin") == '1234'
+        page.fill('#pinNew', '12'); page.fill('#pinNew2', '12'); page.click('[data-act=setpin]'); page.wait_for_timeout(120)
+        short_ok = run_js(page, "() => YUNI.state.settings.parentPin") == '1234'
+        page.fill('#pinNew', '5678'); page.fill('#pinNew2', '5678'); page.click('[data-act=setpin]'); page.wait_for_timeout(150)
+        changed = run_js(page, "() => YUNI.state.settings.parentPin") == '5678' and run_js(page, vis_panels) == ['settings']
+        tab_in_view = "() => { const b = document.querySelector('.ptab.on'); if (!b) return null; const r = b.getBoundingClientRect(); return r.left >= -1 && r.right <= innerWidth + 1 && r.bottom > 0 && r.top < innerHeight ? b.dataset.arg : 'out:' + b.dataset.arg + ':' + Math.round(r.left) + '-' + Math.round(r.right); }"
+        in_settings = run_js(page, tab_in_view)
+        page.click('.ptab[data-arg="manage"]'); page.wait_for_timeout(100)
+        page.fill('#pcode', run_js(page, "() => { const q = YUNI.state.pos; return `${q.u+1}-${q.d}-${q.s+1}`; }")); page.click('[data-act=setpos]'); page.wait_for_timeout(250)
+        in_manage = run_js(page, tab_in_view)
+        check(f'[{dev}] KREQ-63 다시 그린 뒤(설정 탭 암호 바꾸기·백업 탭 진도 맞추기) 켜진 탭 버튼이 화면 안에 보임', in_settings == 'settings' and in_manage == 'manage' and run_js(page, vis_panels) == ['manage']
+              and run_js(page, "() => document.scrollingElement.scrollWidth <= innerWidth + 1"), f'{in_settings},{in_manage}')
+        page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        page.click('[data-act=parent]'); page.wait_for_selector('#ans')
+        page.fill('#ans', '1234'); page.click('[data-act=ok]'); page.wait_for_timeout(250)
+        old_blocked = run_js(page, "() => !document.querySelector('.parent')")
+        page.fill('#ans', '5678'); page.click('[data-act=ok]'); page.wait_for_selector('.parent', timeout=3000)
+        check(f'[{dev}] KREQ-61 설정 탭에서 암호 바꾸기 (다르게 두 번·4자리 미만은 거절) → 새 암호로 열리고 1234는 안 열림', mismatch_ok and short_ok and changed and old_blocked and run_js(page, "() => !!document.querySelector('.parent')"),
+              f'{mismatch_ok},{short_ok},{changed},{old_blocked}')
+        # 암호를 잊었어요 → 곱셈 맞히면 1234로
+        page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        page.click('[data-act=parent]'); page.wait_for_selector('#ans'); page.click('[data-act=forgot]'); page.wait_for_timeout(150)
+        prob = run_js(page, "() => document.querySelector('.gate').innerText")
+        page.screenshot(path=f'{SHOT}/{dev}_49_pinreset.png')
+        m = re.search(r'(\d+)\s*×\s*(\d+)', prob)
+        x, y = int(m.group(1)), int(m.group(2))
+        page.fill('#ans', str(x * y + 1)); page.click('[data-act=ok]'); page.wait_for_timeout(150)
+        wrong_stay = run_js(page, "() => !document.querySelector('.parent') && YUNI.state.settings.parentPin === '5678'")
+        m = re.search(r'(\d+)\s*×\s*(\d+)', run_js(page, "() => document.querySelector('.gate').innerText")); x, y = int(m.group(1)), int(m.group(2))
+        page.fill('#ans', str(x * y)); page.click('[data-act=ok]'); page.wait_for_selector('.parent', timeout=3000)
+        check(f'[{dev}] KREQ-61 "암호를 잊었어요" 두 자리×두 자리 곱셈 맞히면 1234로 되돌림 (틀리면 그대로)', wrong_stay and 10 <= x <= 99 and 10 <= y <= 99 and run_js(page, "() => YUNI.state.settings.parentPin") == '1234'
+              and run_js(page, vis_panels) == ['settings'], f'{x}x{y} {wrong_stay}')
+        page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        page.click('[data-act=parent]'); page.wait_for_selector('#ans'); page.fill('#ans', '1234'); page.click('[data-act=ok]'); page.wait_for_selector('.parent')
+        check(f'[{dev}] KREQ-61 되돌린 뒤 1234로 다시 열림', run_js(page, vis_panels) == ['summary'])
+        # 우리 반 받아쓰기 입력 (학습·진도 탭)
+        page.click('.ptab[data-arg="progress"]')
         page.fill('#clsTitle', '3회')
         page.fill('#clsDate', run_js(page, "() => { const d = new Date(); d.setDate(d.getDate()+3); return d.toISOString().slice(0,10); }"))
         page.fill('#clsText', '나비가 꽃에 앉아요.\n로봇이 걸어요.\n현이가 개미를 찾았어요.')
@@ -260,7 +392,7 @@ with sync_playwright() as p:
     check('KREQ-23 APP_VERSION·sw VERSION·기획서 버전 일치', f"yuni-hangul-{ver}'" in sw and f'**v{ver}**' in spec, ver)
     check('KREQ-48 주황 색·국어 이름', man['theme_color'] == '#ff7a1a' and man['name'] == '윤이 국어')
     check('KREQ-02 오프라인 캐시 목록에 기획서.md', '기획서.md' in sw)
-    for rid in ['KREQ-01', 'KREQ-02', 'KREQ-04', 'KREQ-07', 'KREQ-08', 'KREQ-12', 'KREQ-16', 'KREQ-17', 'KREQ-18', 'KREQ-40', 'KREQ-41', 'KREQ-42', 'KREQ-43', 'KREQ-45', 'KREQ-47']:
+    for rid in ['KREQ-01', 'KREQ-02', 'KREQ-04', 'KREQ-07', 'KREQ-08', 'KREQ-12', 'KREQ-16', 'KREQ-17', 'KREQ-18', 'KREQ-40', 'KREQ-41', 'KREQ-42', 'KREQ-43', 'KREQ-45', 'KREQ-47', 'KREQ-60', 'KREQ-61', 'KREQ-62', 'KREQ-63', 'KREQ-64']:
         check(f'기획서.md에 {rid} 있음', rid in spec)
     br.close()
 

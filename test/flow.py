@@ -22,7 +22,20 @@ const fakeSS = { speaking:false, getVoices(){ return [{name:'Google 한국의', 
   speak(u){ window.__spoken.push({t:u.text, r:u.rate}); setTimeout(()=>u.onend && u.onend(), 3); }, cancel(){}, onvoiceschanged:null };
 Object.defineProperty(window, 'speechSynthesis', { value: fakeSS, configurable: true });
 window.SpeechSynthesisUtterance = function(t){ this.text=t; };
+window.__KO_LOG = [];
+// 녹음 재생 목업(KREQ-65): 파일을 실제로 요청하고(없으면 onerror) 바로 끝나요. 무엇을 어떤 빠르기로 틀었는지 기록 (?realaudio면 진짜 Audio)
+window.__audio = [];
+if (!location.search.includes('realaudio')) window.Audio = function(src){ const a = this; a.src = src; a.playbackRate = 1; a.paused = true;
+  a.play = () => { a.paused = false; window.__audio.push({src: String(src), rate: a.playbackRate});
+    return fetch(src).then(r => { if (!r.ok) throw 0; setTimeout(() => { if (!a.paused) { a.paused = true; a.onended && a.onended(); } }, 5); })
+      .catch(() => { setTimeout(() => a.onerror && a.onerror(), 1); }); };
+  a.pause = () => { a.paused = true; }; };
 """
+KO_IDX = json.load(open(os.path.join(APP, 'audio-ko', 'index.json'), encoding='utf-8'))
+ko_norm = lambda t: re.sub(r'\s+', ' ', str(t)).strip()
+ko_parts = lambda t: [x.strip() for x in re.split(r'(?<=[.!?])\s+', str(t)) if x.strip()]
+ko_logs = []  # (기기, 문장)
+CLASS_TEXTS = {'로봇이 걸어요.', '현이가 개미를 찾았어요.'}  # 테스트에서 아빠가 넣은 우리 반 문장(미리 녹음 불가 → 기기 음성)
 
 results = []  # (항목, OK/FAIL, 설명)
 def check(name, cond, info=''):
@@ -126,13 +139,14 @@ def play_day(page, tag, wrong_plan=None, shots=True):
     return {'end': cur, 'types': seen_types, 'prev_missing': prev_missing, 'bad': bad_found, 'red': red_found, 'input': input_found}
 
 with sync_playwright() as p:
-    br = p.chromium.launch()
+    br = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
     for dev, vp, mobile in [('tab', {'width': 1280, 'height': 800}, False), ('phone', {'width': 390, 'height': 844}, True)]:
         print(f'== {dev} {vp}')
         ctx = br.new_context(viewport=vp, is_mobile=mobile, has_touch=mobile, device_scale_factor=1.5 if not mobile else 2)
         ctx.add_init_script(MOCK)
         page = ctx.new_page()
-        errors = []
+        errors = []; reqs = []
+        page.on('request', lambda r: reqs.append(r.url))
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.on('console', lambda m: errors.append(m.text) if m.type == 'error' and 'favicon' not in m.text else None)
         page.goto(URL); page.wait_for_selector('.go-btn')
@@ -351,7 +365,11 @@ with sync_playwright() as p:
         a = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.act))")
         page.wait_for_timeout(2500)
         spoken = run_js(page, "() => window.__spoken.filter(x => Math.abs(x.r - 0.8) < 0.01).map(x => x.t)")
-        check(f'[{dev}] KREQ-12 받아쓰기 음성: 띄어 읽기 단위로 끊어 천천히(0.8)', spoken == a['text'].split(' '), str(spoken))
+        aud = run_js(page, "() => window.__audio.filter(x => x.src.includes('audio-ko/')).map(x => [x.src.split('/').pop(), x.rate])")
+        if a['text'] in KO_IDX:
+            check(f'[{dev}] KREQ-12/65 받아쓰기 음성: 녹음 문장 전체를 보통 빠르기로 (받아쓰기 속도 0.8 = 녹음 원래 빠르기)', [KO_IDX[a['text']], 1] in [[f, round(r, 2)] for f, r in aud], str(aud))
+        else:
+            check(f'[{dev}] KREQ-12 받아쓰기 음성(녹음 없는 우리 반 문장 → 기기 음성): 띄어 읽기 단위로 끊어 천천히(0.8)', spoken == a['text'].split(' '), str(spoken))
         nospace = a['text'].replace(' ', '', 1)
         for k in run_js(page, "t => HANGUL.keysFor(t)", nospace):
             page.click('[data-act=sp]') if k == ' ' else page.click(f'.key[data-arg="{k}"]')
@@ -378,8 +396,55 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-01 가로 넘침 없음 (단계 고르기)', run_js(page, "() => document.scrollingElement.scrollWidth <= innerWidth + 1"))
         page.fill('#code', '5-2'); page.click('[data-act=code]'); wait_change(page, '')
         check(f'[{dev}] KREQ-09 진도 코드로 바로 가기', run_js(page, "() => YUNI.state.pos.u") == 4)
+        # --- KREQ-65 한국어 녹음 목소리: 받아쓰기 보통·🐢 천천히, 녹음 없는 문장, 기기 음성 설정 ---
+        for sel_ in ['[data-act=quit]', '[data-act=home]']:
+            if not run_js(page, "() => !!document.querySelector('.go-btn')") and page.locator(sel_).count(): page.click(sel_); page.wait_for_timeout(200)
+        page.wait_for_selector('.go-btn')
+        dk = "async ([t, slow]) => { window.__audio = []; window.__spoken = []; await YUNI.dictate(t, slow); return { a: window.__audio.map(x => [x.src.split('/').pop(), Math.round(x.rate * 100) / 100]), s: window.__spoken.map(x => [x.t, x.r]) }; }"
+        n1 = run_js(page, dk, ['나비가 꽃에 앉아요.', False]); s1 = run_js(page, dk, ['나비가 꽃에 앉아요.', True])
+        w0 = run_js(page, dk, ['나비', False]); w1 = run_js(page, dk, ['나비', True])
+        units = [KO_IDX.get(u) for u in ['나비가', '꽃에', '앉아요.']]
+        check(f'[{dev}] KREQ-65 받아쓰기 보통 = 녹음 문장 전체(1.0배), 기기 음성 안 씀', n1['a'] == [[KO_IDX['나비가 꽃에 앉아요.'], 1]] and not n1['s'], json.dumps(n1, ensure_ascii=False))
+        check(f'[{dev}] KREQ-65 받아쓰기 🐢 천천히 = 띄어 읽기 단위 녹음을 0.8배로 하나씩', all(units) and s1['a'] == [[f, 0.8] for f in units] and not s1['s'], json.dumps(s1, ensure_ascii=False))
+        check(f'[{dev}] KREQ-65 낱말 받아쓰기: 보통 1.0배, 🐢 0.8배 (같은 녹음)', w0['a'] == [[KO_IDX['나비'], 1]] and w1['a'] == [[KO_IDX['나비'], 0.8]], json.dumps([w0, w1], ensure_ascii=False))
+        c1 = run_js(page, dk, ['로봇이 걸어요.', True])
+        check(f'[{dev}] KREQ-65 녹음 없는 우리 반 문장은 기기 음성(🐢 0.65, 단위로 끊어)', c1['s'] == [['로봇이', 0.65], ['걸어요.', 0.65]] and not any('audio-ko' in x[0] for x in c1['a']) , json.dumps(c1, ensure_ascii=False))
+        kk = run_js(page, "async () => { window.__audio = []; window.__spoken = []; await YUNI.ko('다시 들어볼까? 오늘 국어 끝!'); return { a: window.__audio.map(x => x.src.split('/').pop()), s: window.__spoken.map(x => x.t) }; }")
+        check(f'[{dev}] KREQ-65 ko(): 문장마다 녹음 재생, 기기 음성 안 씀', kk['a'] == [KO_IDX['다시 들어볼까?'], KO_IDX['오늘 국어 끝!']] and not kk['s'], json.dumps(kk, ensure_ascii=False))
+        check(f'[{dev}] KREQ-65 audio-ko/*.mp3 파일 요청이 실제로 나감', any(re.search(r'/audio-ko/[0-9a-f]{12}\.mp3', u) for u in reqs), str(len(reqs)))
+        # 아빠 화면 설정 "한국어 읽기: 기기 음성" → 녹음 안 씀
+        page.click('[data-act=parent]'); page.wait_for_selector('#ans'); page.fill('#ans', '1234'); page.click('[data-act=ok]'); page.wait_for_selector('.parent')
+        page.click('.ptab[data-arg="settings"]'); page.select_option('select[data-set="koVoiceMode"]', 'device'); page.wait_for_timeout(150)
+        mode = run_js(page, "() => YUNI.state.settings.koVoiceMode")
+        before = len([u for u in reqs if '/audio-ko/' in u and u.endswith('.mp3')])
+        dv = run_js(page, "async () => { window.__audio = []; window.__spoken = []; await YUNI.ko('다시 들어볼까?'); await YUNI.dictate('나비가 꽃에 앉아요.', true); return { a: window.__audio.length, s: window.__spoken.map(x => [x.t, x.r]) }; }")
+        after = len([u for u in reqs if '/audio-ko/' in u and u.endswith('.mp3')])
+        check(f'[{dev}] KREQ-65 설정 "기기 음성" → audio-ko 요청 없음, 기기 음성으로 읽음 (🐢 0.65 단위)', mode == 'device' and dv['a'] == 0 and after == before and dv['s'][0][0] == '다시 들어볼까?' and dv['s'][1:] == [['나비가', 0.65], ['꽃에', 0.65], ['앉아요.', 0.65]], json.dumps(dv, ensure_ascii=False))
+        page.select_option('select[data-set="koVoiceMode"]', 'rec'); page.wait_for_timeout(100)
+        check(f'[{dev}] KREQ-65 설정 되돌리기 (녹음 목소리 기본)', run_js(page, "() => YUNI.state.settings.koVoiceMode") == 'rec')
+        page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        ko_logs.extend((dev, t) for t in run_js(page, "() => window.__KO_LOG"))
         check(f'[{dev}] 오류 없음 (끝까지)', not errors, str(errors[:3]))
         ctx.close()
+
+    # --- KREQ-65 녹음 목록 적용 범위: 하루 흐름에서 실제로 읽은 한국어가 녹음 목록에 있는지 ---
+    logged = sorted({ko_norm(t) for _, t in ko_logs if ko_norm(t)})
+    user = [t for t in logged if t in CLASS_TEXTS or ko_norm(t.replace('/', ' ')) in CLASS_TEXTS]
+    target = [t for t in logged if t not in user]
+    covered = [t for t in target if t in KO_IDX or all(x in KO_IDX for x in ko_parts(t))]
+    missing = [t for t in target if t not in covered]
+    pct = 100 * len(covered) / max(1, len(target))
+    print(f'KREQ-65 적용 범위: 읽은 글 {len(target)}개 중 녹음 {len(covered)}개 ({pct:.1f}%), 우리 반 문장(기기 음성) {len(user)}개')
+    for t in missing: print('   녹음 없음:', t)
+    check(f'KREQ-65 하루 흐름에서 읽은 한국어의 95% 이상이 녹음 목록에 ({pct:.1f}%)', pct >= 95 and len(target) >= 30, '; '.join(missing[:8]))
+    # 진짜 Audio로 재생 (mp3가 브라우저에서 열리고 끝까지 재생되는지)
+    ctx = br.new_context(); ctx.add_init_script(MOCK); page = ctx.new_page(); reqs = []
+    page.on('request', lambda r: reqs.append(r.url))
+    page.goto(URL + '?realaudio=1'); page.wait_for_selector('.go-btn'); page.wait_for_function("() => fetch('audio-ko/index.json').then(() => true)")
+    page.wait_for_timeout(300)
+    real = run_js(page, "async () => { const t0 = Date.now(); window.__spoken = []; await YUNI.ko('다시 들어볼까?'); return { ms: Date.now() - t0, dev: window.__spoken.length }; }")
+    check('KREQ-65 진짜 Audio로 녹음 재생 (mp3 요청, 기기 음성 안 씀)', any('/audio-ko/' + KO_IDX['다시 들어볼까?'] in u for u in reqs) and real['dev'] == 0, json.dumps(real))
+    ctx.close()
 
     # --- 정적 점검 ---
     src = open(f'{APP}/app.js', encoding='utf-8').read(); sw = open(f'{APP}/sw.js', encoding='utf-8').read(); spec = open(f'{APP}/기획서.md', encoding='utf-8').read()
@@ -392,7 +457,9 @@ with sync_playwright() as p:
     check('KREQ-23 APP_VERSION·sw VERSION·기획서 버전 일치', f"yuni-hangul-{ver}'" in sw and f'**v{ver}**' in spec, ver)
     check('KREQ-48 주황 색·국어 이름', man['theme_color'] == '#ff7a1a' and man['name'] == '윤이 국어')
     check('KREQ-02 오프라인 캐시 목록에 기획서.md', '기획서.md' in sw)
-    for rid in ['KREQ-01', 'KREQ-02', 'KREQ-04', 'KREQ-07', 'KREQ-08', 'KREQ-12', 'KREQ-16', 'KREQ-17', 'KREQ-18', 'KREQ-40', 'KREQ-41', 'KREQ-42', 'KREQ-43', 'KREQ-45', 'KREQ-47', 'KREQ-60', 'KREQ-61', 'KREQ-62', 'KREQ-63', 'KREQ-64']:
+    check('KREQ-65 sw.js가 audio-ko/index.json 캐시 + 녹음 파일 백그라운드 받기, 업데이트 목록에도', "'audio-ko/index.json'" in sw and 'cacheAudio' in sw and "'audio-ko/index.json']" in src)
+    check('KREQ-65 녹음 파일이 index.json과 맞음', all(os.path.exists(os.path.join(APP, 'audio-ko', f)) for f in KO_IDX.values()), str(len(KO_IDX)))
+    for rid in ['KREQ-01', 'KREQ-02', 'KREQ-04', 'KREQ-07', 'KREQ-08', 'KREQ-12', 'KREQ-16', 'KREQ-17', 'KREQ-18', 'KREQ-40', 'KREQ-41', 'KREQ-42', 'KREQ-43', 'KREQ-45', 'KREQ-47', 'KREQ-60', 'KREQ-61', 'KREQ-62', 'KREQ-63', 'KREQ-64', 'KREQ-65']:
         check(f'기획서.md에 {rid} 있음', rid in spec)
     br.close()
 

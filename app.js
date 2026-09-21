@@ -241,7 +241,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.3.1';
+  const APP_VERSION = '0.4.0';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -260,7 +260,7 @@ window.HANGUL = (() => {
   function defaults() {
     return {
       settings: { parentPin: '1234',
-        robotName: '로보', childName: '윤이', dailyLimit: 20, koVoice: '', koRate: 0.9, dictRate: 0.8, listenMax: 0,
+        robotName: '로보', childName: '윤이', dailyLimit: 20, koVoice: '', koVoiceMode: 'rec', koRate: 0.9, dictRate: 0.8, listenMax: 0,
         spaceOn: true, spaceFrom: 7, punctOn: true, punctFrom: 2, classSpace: true, classPunct: true,
         goalStars: 50, goalText: '아빠와 약속한 선물',
       },
@@ -337,17 +337,59 @@ window.HANGUL = (() => {
       try { speechSynthesis.speak(u); } catch (e) { fin(); }
     });
   }
-  // 안내 말: 문장부호마다 짧게 끊어서 읽어요
-  async function ko(t) {
+  /* ================= 한국어 녹음 재생 (공통 65번) — 세 앱 같은 코드 (plan/0_COMMON_spec.md 5-2) =================
+     audio-ko/index.json = { "문장": "파일.mp3" } (tools/make_ko_audio.py로 만든 Supertonic 3 목소리 6, 속도 보통).
+     ko(t): ① 전체 문장 녹음이 있으면 재생 ② 없으면 문장(. ! ?) 단위로 나눠 녹음이 있는 문장은 재생, 없는 문장만 기기 음성
+     아빠 화면 설정 koVoiceMode: 'rec'(녹음 목소리, 기본) | 'device'(기기 음성). 속도 설정 koRate는 녹음에도 적용(0.9 = 보통) */
+  let KO_IDX = null; let koAudio = null; let koDone = null; let koChain = Promise.resolve();
+  const koKey = t => String(t).replace(/\s+/g, ' ').trim();
+  fetch('audio-ko/index.json').then(r => (r.ok ? r.json() : {})).then(j => { KO_IDX = j || {}; }).catch(() => { KO_IDX = {}; });
+  const koRec = t => (S.settings.koVoiceMode !== 'device' && KO_IDX && KO_IDX[koKey(t)]) || null;
+  const koSentences = t => String(t).split(/(?<=[.!?])\s+/).map(x => x.trim()).filter(Boolean);
+  function koStop() { const d = koDone; if (koAudio) { try { koAudio.pause(); } catch (e) { /* */ } koAudio = null; } if (d) d(false); }
+  // 국어 앱: 녹음도 기기 음성처럼 차례로 재생해요(재생 중에 새 말이 오면 끝난 뒤에). hush()가 sayToken을 올리고 koStop()으로 모두 멈춰요.
+  // (받아쓰기 정답 뒤 낱말 읽기 + "은후: 고마워!"처럼 겹칠 때 앞 재생이 끊겨 다음 문제로 안 넘어가던 문제 방지)
+  function playKo(file, rate) {
+    const my = sayToken;
+    const p = koChain.then(() => (my !== sayToken ? false : new Promise(resolve => {
+      const a = new Audio('audio-ko/' + file); koAudio = a;
+      a.playbackRate = Math.max(0.7, Math.min(1.3, (Number(rate) || 0.9) / 0.9));
+      let fin = false;
+      const done = ok => { if (fin) return; fin = true; if (koAudio === a) koAudio = null; if (koDone === done) koDone = null; resolve(ok); };
+      koDone = done;
+      a.onended = () => done(true); a.onerror = () => done(false);
+      a.play().catch(() => done(false));
+      setTimeout(() => done(true), 20000); // 끝 신호가 안 와도 다음 말이 막히지 않게
+    })));
+    koChain = p.catch(() => false); return p;
+  }
+  // 기기 음성(녹음이 없을 때): 문장부호마다 짧게 끊어서 읽어요
+  async function speakDevice(t, rate) {
     const parts = String(t).split(/(?<=[.!?,])\s+/).map(x => x.trim()).filter(Boolean);
-    const my = sayToken; const rate = Number(S.settings.koRate) || 0.9;
+    const my = sayToken;
     for (let i = 0; i < parts.length; i++) {
       if (my !== sayToken) return;
       await speak(parts[i], rate);
       if (i < parts.length - 1) await sleep(120);
     }
   }
-  /* 받아쓰기 불러주기: 아빠 녹음 → 없으면 띄어 읽기 단위(낱말 묶음)마다 끊어서 천천히 */
+  // 안내 말
+  async function ko(t) {
+    if (window.__KO_LOG) window.__KO_LOG.push(String(t)); // 테스트·문장 수집용
+    const my = sayToken; const rate = Number(S.settings.koRate) || 0.9;
+    const whole = koRec(t);
+    if (whole) { if (await playKo(whole, rate)) return; if (my !== sayToken) return; }
+    const parts = koSentences(t);
+    for (let i = 0; i < parts.length; i++) {
+      if (my !== sayToken) return;
+      const f = koRec(parts[i]);
+      if (!(f && await playKo(f, rate))) { if (my !== sayToken) return; await speakDevice(parts[i], rate); }
+      if (i < parts.length - 1) await sleep(120);
+    }
+  }
+  /* 받아쓰기 불러주기: 아빠 녹음 → 녹음 목소리(audio-ko) → 없으면 기기 음성으로 띄어 읽기 단위(낱말 묶음)마다 끊어서 천천히
+     녹음 목소리: 보통 = 전체 문장 녹음(받아쓰기 속도 dictRate 적용), 🐢 천천히 = 띄어 읽기 단위 녹음을 0.8배로 하나씩 끊어서
+     (단위 녹음이 없거나 한 낱말이면 전체 녹음을 0.8배로) */
   let curAudio = null;
   function playUrl(src) {
     return new Promise(resolve => {
@@ -369,13 +411,31 @@ window.HANGUL = (() => {
     }
     const rate = slow ? 0.65 : (Number(S.settings.dictRate) || 0.8);
     const parts = readUnits(text);
+    if (window.__KO_LOG) window.__KO_LOG.push(key);
+    const whole = koRec(key);
+    if (whole) {
+      const SLOW = 0.8 * 0.9; // playbackRate 0.8
+      const unitFiles = parts.length > 1 ? parts.map(koRec) : [];
+      if (slow && unitFiles.length && unitFiles.every(Boolean)) {
+        let ok = true;
+        for (let i = 0; i < unitFiles.length && ok; i++) {
+          if (my !== sayToken) return;
+          ok = await playKo(unitFiles[i], SLOW);
+          if (ok && i < unitFiles.length - 1) await sleep(650);
+        }
+        if (ok || my !== sayToken) return;
+      } else {
+        if (await playKo(whole, slow ? SLOW : 0.9 * rate / 0.8)) return; // 보통: dictRate 0.8(기본) = 녹음 원래 빠르기
+        if (my !== sayToken) return;
+      }
+    }
     for (let i = 0; i < parts.length; i++) {
       if (my !== sayToken) return;
       await speak(parts[i], rate);
       if (i < parts.length - 1) await sleep(slow ? 650 : 380);
     }
   }
-  function hush() { sayToken++; try { speechSynthesis.cancel(); } catch (e) { /* */ } if (curAudio) { try { curAudio.pause(); } catch (e) { /* */ } curAudio = null; } }
+  function hush() { sayToken++; koStop(); try { speechSynthesis.cancel(); } catch (e) { /* */ } if (curAudio) { try { curAudio.pause(); } catch (e) { /* */ } curAudio = null; } }
   const praise = () => pick(C.lines.praise);
 
   let actx = null;
@@ -1380,7 +1440,7 @@ window.HANGUL = (() => {
   }
   async function applyUpdate() {
     toast('새 버전을 받는 중이에요…');
-    const files = ['./', 'index.html', 'app.js', 'content.js', 'style.css', 'sw.js', 'manifest.webmanifest', '기획서.md'];
+    const files = ['./', 'index.html', 'app.js', 'content.js', 'style.css', 'sw.js', 'manifest.webmanifest', '기획서.md', 'audio-ko/index.json'];
     try { await Promise.all(files.map(u => fetch(encodeURI(u), { cache: 'reload' }).catch(() => {}))); } catch (e) { /* */ }
     try { if (navigator.serviceWorker) for (const reg of await navigator.serviceWorker.getRegistrations()) await reg.unregister(); } catch (e) { /* */ }
     try { if (window.caches) for (const k of await caches.keys()) await caches.delete(k); } catch (e) { /* */ }
@@ -1591,6 +1651,7 @@ window.HANGUL = (() => {
       <div class="card"><h3>설정</h3><div class="form">
         <label>부르는 이름<input data-set="childName" value="${esc(st.childName)}"></label>
         <label>로봇 친구 이름<input data-set="robotName" value="${esc(st.robotName)}"></label>
+        <label>한국어 읽기<select data-set="koVoiceMode"><option value="rec"${st.koVoiceMode !== 'device' ? ' selected' : ''}>녹음 목소리 (추천)</option><option value="device"${st.koVoiceMode === 'device' ? ' selected' : ''}>기기 음성</option></select></label>
         <label>한국어 목소리<select data-set="koVoice"><option value="">자동 (구글 음성 우선)</option>${koVoices().map(v => `<option value="${esc(v.voiceURI || v.name)}"${st.koVoice === (v.voiceURI || v.name) ? ' selected' : ''}>${esc(v.name)}${v.localService ? '' : ' (온라인)'}</option>`).join('')}</select></label>
         <label>안내 말 속도${sel('koRate', [[0.8, '천천히'], [0.9, '보통 (추천)'], [1, '빠르게']], st.koRate)}</label>
         <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="kotest">🔈 받아쓰기 들어보기</button>
@@ -1709,7 +1770,7 @@ window.HANGUL = (() => {
   // 저장된 진도가 브라우저 정리로 지워지지 않게 요청
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* */ }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { hush(); stopRecording(); } });
-  window.YUNI = { get state() { return S; }, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, parseCode, contentWarnings, KEY, APP_VERSION, DAY_STAR_MAX, DAY_BONUS }; // 테스트용
+  window.YUNI = { get state() { return S; }, ko, dictate, hush, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, parseCode, contentWarnings, KEY, APP_VERSION, DAY_STAR_MAX, DAY_BONUS }; // 테스트용
   homeScreen();
   // 시작하고 잠시 뒤 새 버전이 있는지 조용히 확인
   setTimeout(() => { if (!/^https?:/.test(location.protocol) || window.__SPEC_INLINE || navigator.onLine === false) return;

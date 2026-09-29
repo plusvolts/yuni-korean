@@ -197,8 +197,8 @@ window.HANGUL = (() => {
     const wrong = new Set(), missBefore = new Set(), spaceMiss = new Set(), spaceExtra = new Set();
     const cats = new Set(); const errs = [];
     for (const o of ops) {
-      if (o.op === 'sub') { wrong.add(iL[o.g].pos); const cat = classify(eL[o.e].c, iL[o.g].c, eL[o.e].pos, inf); cats.add(cat); errs.push({ e: eL[o.e].c, g: iL[o.g].c, cat, epos: eL[o.e].pos }); }
-      else if (o.op === 'ins') { wrong.add(iL[o.g].pos); const cat = isPunct(iL[o.g].c) ? '문장부호' : '기타'; cats.add(cat); errs.push({ e: '', g: iL[o.g].c, cat }); }
+      if (o.op === 'sub') { wrong.add(iL[o.g].pos); const cat = classify(eL[o.e].c, iL[o.g].c, eL[o.e].pos, inf); cats.add(cat); errs.push({ e: eL[o.e].c, g: iL[o.g].c, cat, epos: eL[o.e].pos, gpos: iL[o.g].pos }); }
+      else if (o.op === 'ins') { wrong.add(iL[o.g].pos); const cat = isPunct(iL[o.g].c) ? '문장부호' : '기타'; cats.add(cat); errs.push({ e: '', g: iL[o.g].c, cat, gpos: iL[o.g].pos }); }
       else if (o.op === 'del') { missBefore.add(o.g < iL.length ? iL[o.g].pos : I.length); const cat = isPunct(eL[o.e].c) ? '문장부호' : '기타'; cats.add(cat); errs.push({ e: eL[o.e].c, g: '', cat, epos: eL[o.e].pos }); }
     }
     const lettersOk = !errs.some(x => x.cat !== '문장부호');
@@ -220,6 +220,39 @@ window.HANGUL = (() => {
     const ok = lettersOk && (!opts.punct || punctOk) && (!opts.space || spaceOk);
     return { ok, lettersOk, spaceOk, punctOk, cats: [...cats], errs, wrong, missBefore, spaceMiss, spaceExtra, info: inf };
   }
+  /* 틀린 곳 자세히 (KREQ-51): 바른 글자 e와 쓴 글자 g를 자음·모음·받침으로 비교
+   * 결과 { kind, tag(칸 아래 작은 표시), say(틀린 자리), fix(바른 자모 = 2번째 힌트), parts:[{p,want,got}] } */
+  function explain(e, g) {
+    if (!e && !g) return null;
+    if (!e) return { kind: 'extra', tag: '빼요', say: isPunct(g) ? '필요 없는 문장부호예요' : '필요 없는 글자예요', fix: '이 글자는 빼요', parts: [] };
+    if (!g) return { kind: 'missing', tag: '', say: isPunct(e) ? '문장부호가 빠졌어요 (▾ 자리)' : '글자가 하나 빠졌어요 (▾ 자리)', fix: `빠진 ${isPunct(e) ? '문장부호' : '글자'}는 '${e}'`, parts: [] };
+    if (isPunct(e) || isPunct(g)) return { kind: 'punct', tag: '부호', say: isPunct(e) && isPunct(g) ? '문장부호가 달라요' : isPunct(e) ? '여기는 문장부호 자리예요' : '여기는 문장부호가 아니에요', fix: `여기는 '${e}'`, parts: [] };
+    const a = dec(e), b = dec(g);
+    if (!a) return { kind: 'other', tag: '', say: '다른 글자예요', fix: `바른 글자는 '${e}'`, parts: [] };
+    if (!b) return { kind: 'unfinished', tag: '덜 씀', say: '글자를 끝까지 만들지 않았어요 (자음+모음)', fix: `바른 글자는 '${e}'`, parts: [] };
+    const parts = []; const say = [], fix = [];
+    if (a.cho !== b.cho) {
+      parts.push({ p: 'cho', want: a.cho, got: b.cho });
+      say.push(TENSE[b.cho] === a.cho ? '자음을 된소리로 써요' : TENSE[a.cho] === b.cho ? '자음이 된소리가 아니에요' : a.cho === 'ㅇ' ? '자음이 달라요 (앞 글자 받침 소리가 넘어왔어요)' : '자음이 달라요');
+      fix.push(`자음은 ${a.cho}`);
+    }
+    if (a.jung !== b.jung) {
+      parts.push({ p: 'jung', want: a.jung, got: b.jung });
+      const sp = x => JUNG_SPLIT[x] ? JUNG_SPLIT[x] : null;
+      say.push(sp(a.jung) && sp(a.jung).includes(b.jung) ? '모음이 하나 빠졌어요 (두 모음을 합친 글자)' : '모음이 달라요');
+      fix.push(`모음은 ${a.jung}`);
+    }
+    if (a.jong !== b.jong) {
+      parts.push({ p: 'jong', want: a.jong, got: b.jong });
+      const ja = JONG_SPLIT[a.jong], jb = JONG_SPLIT[b.jong];
+      say.push(!a.jong ? '받침이 없는 글자예요' : !b.jong ? '받침이 빠졌어요'
+        : ja && ja.includes(b.jong) ? '겹받침이에요. 받침이 두 개예요'
+        : jb && jb.includes(a.jong) ? '받침은 하나만 써요' : '받침이 달라요');
+      fix.push(a.jong ? `받침은 ${a.jong}` : '받침은 없어요');
+    }
+    const NAME = { cho: '자음', jung: '모음', jong: '받침' };
+    return { kind: 'parts', tag: parts.length === 1 ? NAME[parts[0].p] : parts.length ? '두 곳' : '', say: say.join(', '), fix: fix.join(', '), parts, e, g };
+  }
   // 헷갈리는 보기 만들기 (소리 나는 대로 쓴 말, 비슷한 받침, 된소리, 모음)
   const GROUPS = [['ㅅ', 'ㅈ', 'ㅊ', 'ㅌ', 'ㄷ'], ['ㄱ', 'ㄲ', 'ㅋ'], ['ㅂ', 'ㅍ'], ['ㄴ', 'ㅁ', 'ㅇ'], ['ㄹ', 'ㄴ']];
   const VSWAP = { 'ㅏ': 'ㅓ', 'ㅓ': 'ㅗ', 'ㅗ': 'ㅓ', 'ㅜ': 'ㅡ', 'ㅡ': 'ㅜ', 'ㅐ': 'ㅔ', 'ㅔ': 'ㅐ', 'ㅕ': 'ㅛ', 'ㅛ': 'ㅕ', 'ㅣ': 'ㅢ', 'ㅑ': 'ㅕ', 'ㅠ': 'ㅛ' };
@@ -236,12 +269,12 @@ window.HANGUL = (() => {
     return out;
   }
   const jongGroup = j => (GROUPS.find(x => x.includes(j)) || ['ㄱ', 'ㄴ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅅ', 'ㅇ']).filter(x => x !== j);
-  return { CHO, JUNG, JONG, TENSE, dec, comp, isSyl, isVowel, isPunct, syls, Composer, keysFor, pron, info, classify, grade, variants, jongGroup, primary };
+  return { CHO, JUNG, JONG, TENSE, dec, comp, isSyl, isVowel, isPunct, syls, Composer, keysFor, pron, info, classify, grade, explain, variants, jongGroup, primary };
 })();
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.4.0';
+  const APP_VERSION = '0.4.1';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -1110,6 +1143,23 @@ window.HANGUL = (() => {
       : '<button class="key submit" data-act="submit" style="grid-column:span 7">✔ 다 썼어요</button>';
     return `<div class="kbd" id="kbd">${KB_ROWS.map(r => r.map(key).join('')).join('')}${last}</div>`;
   }
+  /* 틀린 곳 설명 (KREQ-51): 쓴 글자를 자음+모음+받침으로 나눠 틀린 자리만 주황. level 2면 바른 자모까지 */
+  function whyHtml(res, level) {
+    const list = res.errs.map(x => ({ x, ex: HG.explain(x.e, x.g) })).filter(o => o.ex);
+    const rows = list.slice(0, 3).map(({ x, ex }) => {
+      let pic = '';
+      if (ex.kind === 'parts') {
+        const d = HG.dec(x.g); const bad = new Set(ex.parts.map(p => p.p));
+        pic = ['cho', 'jung', 'jong'].filter(k => d[k] || bad.has(k)).map(k => `<b class="jm${bad.has(k) ? ' miss' : ''}">${d[k] ? esc(d[k]) : '□'}</b>`).join('<i>+</i>');
+        pic = `<span class="wg miss">${esc(x.g)}</span><i>=</i>${pic}`;
+      } else if (x.g) pic = `<span class="wg miss">${esc(x.g)}</span>`;
+      else pic = '<span class="wg miss">▾</span>';
+      return `<div class="why-row">${pic}<span class="why-say">${esc(ex.say)}${level >= 2 && ex.fix ? ` → <b class="why-fix">${esc(ex.fix)}</b>` : ''}</span></div>`;
+    });
+    if (list.length > 3) rows.push(`<div class="why-more">그리고 ${list.length - 3}곳 더 있어요</div>`);
+    if (!res.spaceOk && res.errs.length) rows.push('<div class="why-more">띄어 쓸 곳도 다시 봐요 (∨ 자리)</div>');
+    return rows.length ? `<div class="why-title">🔍 틀린 곳</div>${rows.join('')}` : '';
+  }
   function gridHtml(cp) {
     const cells = cp.cells(); const out = [];
     const cursorAt = cp.c ? -1 : cp.cur;
@@ -1117,7 +1167,7 @@ window.HANGUL = (() => {
       if (k === cursorAt) out.push('<i class="caret"></i>');
       if (c.meta.mb) out.push('<i class="missmark">▾</i>');
       const cls = ['cell']; if (c.ch === ' ') cls.push('sp'); if (c.composing) cls.push('comp'); if (c.meta.w) cls.push('miss'); if (c.meta.sx) cls.push('sx');
-      out.push(`<span class="${cls.join(' ')}" data-act="cur" data-arg="${c.composing ? -1 : c.i}">${c.ch === ' ' ? (c.meta.sx ? '⁀' : '') : esc(c.ch)}</span>`);
+      out.push(`<span class="${cls.join(' ')}" data-act="cur" data-arg="${c.composing ? -1 : c.i}">${c.ch === ' ' ? (c.meta.sx ? '⁀' : '') : esc(c.ch)}${c.meta.w && c.meta.tag ? `<em class="ctag">${esc(c.meta.tag)}</em>` : ''}</span>`);
       if (c.meta.sm) out.push('<i class="vmark">∨</i>');
     });
     if (cursorAt === cells.length) out.push('<i class="caret"></i>');
@@ -1140,10 +1190,11 @@ window.HANGUL = (() => {
       if (!canListen()) document.querySelectorAll('.listen').forEach(b => { b.disabled = true; b.style.opacity = '.35'; });
     };
     const rules = [...HG.info(a.text, a.sound).rules].filter(r => r !== '띄어쓰기').concat(a.space ? ['띄어쓰기'] : [], a.punct && /[.,?!]/.test(a.text) ? ['문장부호'] : []);
+    const showWhy = (res, level) => { const el = document.getElementById('why'); if (!el) return; const h = res ? whyHtml(res, level) : ''; el.innerHTML = h; el.hidden = !h; };
     const f = flow(a, {
       text: a.text, srs: a.src === 'word', rules,
       reveal: () => {
-        copyMode = true;
+        copyMode = true; showWhy(null);
         const el = document.getElementById('hintcard'); el.hidden = false;
         el.innerHTML = `<b>정답을 보고 따라 써요</b><div class="answer">${esc(a.text)}</div>`;
         cp.setText(''); cp.clearMarks(); redraw(); setHint('정답을 따라 쓰면 별을 받아요 ⭐');
@@ -1157,6 +1208,7 @@ window.HANGUL = (() => {
         ${scoring ? `<div class="muted">${scoring}</div>` : ''}
         <div class="grid-paper" id="grid" data-act="curend">${gridHtml(cp)}</div>
         <div class="hint" id="hint"></div>
+        <div class="why" id="why" hidden></div>
         <div class="hintcard" id="hintcard" hidden></div>
         <div class="next-row" id="skipRow" hidden><button class="btn small" data-act="skip">다음 ▶</button></div>
       </div>
@@ -1179,21 +1231,24 @@ window.HANGUL = (() => {
         const res = HG.grade(a.text, input, { space: a.space, punct: a.punct, sound: a.sound });
         cp.clearMarks();
         res.wrong.forEach(p => { if (cp.meta[p]) cp.meta[p].w = true; });
+        res.errs.forEach(x => { if (x.gpos !== undefined && cp.meta[x.gpos]) { const ex = HG.explain(x.e, x.g); if (ex && ex.tag) cp.meta[x.gpos].tag = ex.tag; } });
         res.spaceMiss.forEach(p => { if (cp.meta[p]) cp.meta[p].sm = true; });
         res.spaceExtra.forEach(p => { if (cp.meta[p]) cp.meta[p].sx = true; });
         res.missBefore.forEach(p => { if (p >= cp.chars.length) cp.endMiss = true; else if (cp.meta[p]) cp.meta[p].mb = true; });
         redraw();
         if (res.ok) {
+          showWhy(null);
           if (!copyMode) recordDict(a, f.att === 0);
           L.results.push({ text: a.text, ok: f.att === 0 && !copyMode });
           if (copyMode) { f.done = true; ding(); const n = award(true); flash(n ? '⭐' : '👍'); setHint(n ? '잘 따라 썼어요! ⭐' : '잘 따라 썼어요!'); const my = actToken; await ko('잘 따라 썼어요!'); await sleep(300); if (my === actToken) nextAct(); return; }
           setHint('정답! 🎉'); return f.right({ quiet: true }).then(() => {});
         }
-        if (copyMode) { setHint('주황색 글자를 정답과 비교해 봐요. 맞게 따라 쓰면 별을 받아요'); return; }
+        if (copyMode) { showWhy(res, 2); setHint('주황색 글자를 정답과 비교해 봐요. 맞게 따라 쓰면 별을 받아요'); return; }
         if (f.att === 0) { recordDict(a, false, res); L.results.push({ text: a.text, ok: false }); }
         const onlySpace = res.lettersOk && res.punctOk && !res.spaceOk;
         const cat = onlySpace ? '띄어쓰기' : (res.errs.find(x => x.cat !== '기타') || res.errs[0] || { cat: '기타' }).cat;
         const msg = onlySpace ? '글자는 모두 맞았어요! 띄어 쓸 곳만 다시 보자 (∨ 자리)' : '주황색 글자를 고쳐 봐요. 글자를 톡 누르면 그 뒤로 가요';
+        showWhy(onlySpace ? null : res, f.att + 1); // 1번째: 틀린 자리, 2번째: 바른 자모까지 (3번째는 정답 보기)
         if (f.att === 0 && onlySpace) { soft(); f.att++; stat(rules, ['띄어쓰기'], false); setHint(msg); await ko('글자는 모두 맞았어요! 띄어 쓸 곳만 다시 보자.'); return; }
         await f.wrong(cat, input);
         if (f.att === 1) setHint(msg);

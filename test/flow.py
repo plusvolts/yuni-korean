@@ -162,6 +162,11 @@ with sync_playwright() as p:
             check('KREQ-42 자판 글자 조립 (ㄲㅗㅊ→꽃, 겹받침·겹모음)', eng['compose'] and eng['kkot'] == '꽃', json.dumps(eng, ensure_ascii=False))
             check('KREQ-43 글자·띄어쓰기 따로 채점', eng['spaceOnly'] == 'true,false')
             check('KREQ-43 틀린 규칙 자동 분류 (연음·된소리·모음·받침)', eng['yeon'] == '연음' and eng['tense'] == '된소리' and eng['vowel'] == '모음' and eng['batchim'] == '받침')
+            ex = run_js(page, """() => { const X = (e, g) => { const r = HANGUL.explain(e, g); return [r.tag, r.say, r.fix]; };
+              return { kkot: X('꽃','꼳'), dak: X('닭','닥'), hak: X('학','하'), ga: X('가','까'), kka: X('꽃','곷'), gae: X('개','게'), wa: X('과','고'), none: X('나','난'), miss: X('가',''), extra: X('','가'), half: X('가','ㄱ'),
+                gpos: HANGUL.grade('음악','으막').errs.map(x => x.gpos).join() }; }""")
+            check('KREQ-51 틀린 곳 자세히: 받침 다름/겹받침/받침 빠짐/받침 없음', ex['kkot'][:2] == ['받침', '받침이 달라요'] and ex['kkot'][2] == '받침은 ㅊ' and '겹받침' in ex['dak'][1] and ex['hak'][1] == '받침이 빠졌어요' and ex['none'][1] == '받침이 없는 글자예요' and ex['none'][2] == '받침은 없어요', json.dumps(ex, ensure_ascii=False))
+            check('KREQ-51 틀린 곳 자세히: 된소리·자음·모음·글자 빠짐/더 씀/덜 만든 글자', ex['ga'][1] == '자음이 된소리가 아니에요' and ex['kka'][1] == '자음을 된소리로 써요' and ex['gae'][:2] == ['모음', '모음이 달라요'] and '모음이 하나 빠졌어요' in ex['wa'][1] and '빠졌어요' in ex['miss'][1] and ex['extra'][0] == '빼요' and ex['half'][0] == '덜 씀' and ex['gpos'] == '0,1', json.dumps(ex, ensure_ascii=False))
 
         # --- 하루 전체 (틀리는 흐름 포함) ---
         r1 = play_day(page, dev, wrong_plan={'pick': 2, 'dict': 3, 'jong': 1, 'build': 1, 'fix': 0})
@@ -379,6 +384,16 @@ with sync_playwright() as p:
         page.screenshot(path=f'{SHOT}/{dev}_60_dict_space.png')
         of = run_js(page, "() => document.scrollingElement.scrollWidth <= innerWidth + 1")
         check(f'[{dev}] KREQ-01 가로 넘침 없음 (받아쓰기)', of)
+        # KREQ-51: 받침을 빼고 쓰면 "틀린 곳" 상자 + 주황 칸 아래 "받침" 표시 (2번째 틀림이라 바른 받침까지)
+        for _ in range(len(nospace) + 2): page.click('[data-act=bs]')
+        bad = run_js(page, "t => { const H = HANGUL; const W = [...t]; const i = W.findIndex(c => H.isSyl(c) && H.dec(c).jong); const d = H.dec(W[i]); W[i] = H.comp(d.cho, d.jung, ''); return W.join(''); }", a['text'])
+        for k in run_js(page, "t => HANGUL.keysFor(t)", bad):
+            page.click('[data-act=sp]') if k == ' ' else page.click(f'.key[data-arg="{k}"]')
+        page.click('[data-act=submit]'); page.wait_for_timeout(400)
+        why = run_js(page, "() => { const w = document.getElementById('why'); return { shown: !w.hidden, txt: w.innerText, tags: [...document.querySelectorAll('.cell.miss .ctag')].map(x => x.textContent), jm: document.querySelectorAll('.why-row .jm.miss').length } }")
+        check(f'[{dev}] KREQ-51 받아쓰기 틀린 곳: "받침이 빠졌어요" + 바른 받침 + 칸 아래 "받침" 표시', why['shown'] and '받침이 빠졌어요' in why['txt'] and '받침은' in why['txt'] and why['tags'] == ['받침'] and why['jm'] == 1, json.dumps(why, ensure_ascii=False))
+        page.screenshot(path=f'{SHOT}/{dev}_61_dict_why.png')
+        check(f'[{dev}] KREQ-01 가로 넘침 없음 (틀린 곳 상자)', run_js(page, "() => document.scrollingElement.scrollWidth <= innerWidth + 1"))
         page.click('[data-act=quit]'); page.wait_for_selector('.go-btn')
         # 저장 키
         keys = run_js(page, "() => Object.keys(localStorage)")

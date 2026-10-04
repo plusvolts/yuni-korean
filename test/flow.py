@@ -118,6 +118,7 @@ def play_day(page, tag, wrong_plan=None, shots=True):
     seen_types, n = set(), 0
     cur = wait_change(page, '')
     prev_missing, bad_found, red_found, input_found = [], [], False, False
+    use_seen, use_missing = [], []  # KREQ-53 맞힌 뒤 "이렇게 써요" 카드
     while cur and cur != 'reward' and n < 80:
         n += 1
         a = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.act))")
@@ -132,11 +133,19 @@ def play_day(page, tag, wrong_plan=None, shots=True):
         answer(page, a, wf)
         if wf:
             b, r = scan_bad(page, cur); bad_found += b; red_found |= r
+        if a['type'] in ('pick', 'jong', 'build', 'dict', 'fix'):
+            word = a['w']['word'] if a.get('w') else a.get('text', '')
+            t0 = time.time(); seen = None
+            while time.time() - t0 < 4 and act_id(page) == cur:
+                seen = run_js(page, "() => { const u = document.getElementById('usecard'); return u && !u.hidden && u.innerText.includes('이렇게 써요') ? u.innerText : null; }")
+                if seen: break
+                page.wait_for_timeout(60)
+            (use_seen if seen and word in seen else use_missing).append(f"{a['type']}:{word}")
         nxt = wait_change(page, cur, 12000)
         if nxt is None: print('  멈춤:', cur, a['type']); break
         cur = nxt
     if shots: page.screenshot(path=f'{SHOT}/{tag}_99_reward.png')
-    return {'end': cur, 'types': seen_types, 'prev_missing': prev_missing, 'bad': bad_found, 'red': red_found, 'input': input_found}
+    return {'end': cur, 'types': seen_types, 'prev_missing': prev_missing, 'bad': bad_found, 'red': red_found, 'input': input_found, 'use_seen': use_seen, 'use_missing': use_missing}
 
 with sync_playwright() as p:
     br = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
@@ -176,6 +185,7 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-17 모든 문제에 ◀ 이전 버튼', not r1['prev_missing'], str(r1['prev_missing'][:3]))
         check(f'[{dev}] KREQ-07 "땡"·X 표시 없음, 빨간 글자 없음', not r1['bad'] and not r1['red'], str(r1['bad']))
         check(f'[{dev}] KREQ-42 수업 중 기본 키보드 입력칸 없음', not r1['input'])
+        check(f'[{dev}] KREQ-53 맞힌 뒤 "이렇게 써요" 활용 대화 카드 (낱말 포함) {len(r1["use_seen"])}개', len(r1['use_seen']) >= 8 and not r1['use_missing'], str(r1['use_missing'][:4]))
         check(f'[{dev}] KREQ-18 하루 별 50개 이하 + 보너스 3', st['day']['stars'] <= 50 and st['day'].get('bonus') == 1, json.dumps(st['day']))
         check(f'[{dev}] KREQ-08 틀린 말이 어려운 말 상자에', len(st['srs']) > 0, str(st['srs'][:5]))
         check(f'[{dev}] KREQ-47 규칙별 정답률 쌓임', len(st['rs']) > 0, json.dumps(st['rs'], ensure_ascii=False))
@@ -255,6 +265,84 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-64 정답 보여줄 때 "다음 ▶"과 "정답을 따라 쓰면 별을 받아요" 안내', cp_[1] and '정답을 따라 쓰면 별을 받아요' in cp_[2], str(cp_))
         check(f'[{dev}] KREQ-64 정답 본 뒤 맞게 따라 쓰면 별 +1 ("잘 따라 썼어요! ⭐")', cp_[0] == 1 and '⭐' in cp_[3], str(cp_))
         check(f'[{dev}] KREQ-64 "다음 ▶"으로 넘어가면 별 0, ◀ 이전으로 와서 맞혀도 별 0', sk[0] == 0 and sk[1] == 0 and sk[2], str(sk))
+
+        # --- KREQ-52 끝말잇기 놀이 ---
+        if not run_js(page, "() => !!document.querySelector('.go-btn')"): page.click('[data-act=home]')
+        page.wait_for_selector('.go-btn')
+        check(f'[{dev}] KREQ-52 홈에 끝말잇기 버튼', run_js(page, "() => !!document.querySelector('[data-act=game]')"))
+        run_js(page, "() => { YUNI.state.log = {}; }")
+        g_s0 = stars()
+        page.click('[data-act=game]'); page.wait_for_selector('.chain')
+        def g_wait(n=None):
+            page.wait_for_function("n => YUNI.game && !YUNI.game.busy && (n === null || YUNI.game.n === n)", arg=n, timeout=15000)
+            return run_js(page, "() => YUNI.game")
+        def g_clear():
+            k = run_js(page, "() => document.querySelectorAll('#grid .cell:not(.empty)').length")
+            page.click('[data-act=curend]')
+            for _ in range(k + 1): page.click('[data-act=bs]')
+        def g_pick():  # 이어 갈 수 있고, 로보도 그 뒤를 이을 수 있는 낱말 (놀이가 일찍 끝나지 않게)
+            return run_js(page, "() => { const g = YUNI.game; const c = YUNI.gameCands(g.prev, g.used); const deep = (w, u, d) => d <= 0 || YUNI.gameCands(w, u.concat([w])).some(r => deep(r, u.concat([w]), d - 1)); const ok = w => deep(w, g.used, 4); return c.find(ok) || c[0] || null; }")
+        g0 = g_wait(0)
+        page.screenshot(path=f'{SHOT}/{dev}_52_game.png')
+        check(f'[{dev}] KREQ-52 로보가 먼저 낱말을 내고 뜻 카드·윤이 자판', g0['chain'][0]['who'] == 'robot' and run_js(page, "() => !!document.querySelector('.turn-ask') && !!document.querySelector('.kbd .key') && !!document.querySelector('.wmean') && !document.querySelector('.stage input')"), json.dumps(g0, ensure_ascii=False)[:200])
+        # 첫 글자가 안 이어지는 사전 낱말
+        other = run_js(page, "() => YUNI.GAME_WORDS.find(w => !YUNI.gameCands(YUNI.game.prev, []).includes(w) && w.length === 2)")
+        type_text(page, other); page.click('[data-act=submit]'); page.wait_for_timeout(400)
+        h = run_js(page, "() => document.getElementById('hint').textContent")
+        check(f'[{dev}] KREQ-52 첫 글자가 안 이어지면 "…로 시작하는 낱말이어야 해요"', '시작하는 낱말이어야' in h and run_js(page, "() => YUNI.game.n") == 0, h)
+        g_clear()
+        # 모르는 낱말 → 땡 없이 다시 쓰기, 아빠 화면 목록에 기록
+        type_text(page, '꾸뀨'); page.click('[data-act=submit]'); page.wait_for_timeout(400)
+        h = run_js(page, "() => document.getElementById('hint').textContent"); b_, r_ = scan_bad(page, 'game')
+        check(f'[{dev}] KREQ-52 모르는 낱말은 "모르는 낱말이에요"로 다시 쓰기 (땡·X 없음, 기록)', '모르는 낱말' in h and not b_ and not r_ and run_js(page, "() => YUNI.state.game.unknown['꾸뀨'] === 1") and run_js(page, "() => YUNI.game.n") == 0, h)
+        g_clear()
+        # 맞춤법이 조금 틀린 낱말 → 바른 글자 알려 주고 인정
+        sp = run_js(page, "() => { const g = YUNI.game; const deep = (w, u, d) => d <= 0 || YUNI.gameCands(w, u.concat([w])).some(r => deep(r, u.concat([w]), d - 1)); const ok = w => deep(w, g.used, 4); const c = YUNI.gameCands(g.prev, g.used).filter(w => ok(w) && [...w].length >= 2);"
+          " for (const w of c) { const W = [...w]; const d = HANGUL.dec(W[W.length - 1]); const t = W.slice(0, -1).join('') + HANGUL.comp(d.cho, d.jung, d.jong ? '' : 'ㄴ');"
+          " if (!YUNI.GAME_WORDS.includes(t) && YUNI.nearWord(t, g.prev, g.used) === w) return { w, t }; } return null; }")
+        if sp:
+            type_text(page, sp['t']); page.click('[data-act=submit]'); page.wait_for_timeout(600)
+            hc = run_js(page, "() => { const h = document.getElementById('hintcard'); return h && !h.hidden ? h.innerText : ''; }")
+            g1 = g_wait(1)
+            check(f'[{dev}] KREQ-52 맞춤법 틀린 낱말({sp["t"]}→{sp["w"]})은 바른 글자 알려 주고 인정', '이렇게 써요' in hc and sp['w'] in hc and g1['chain'][-2]['w'] == sp['w'] and run_js(page, "t => YUNI.state.game.spelled[t]", sp['t']) == sp['w'], hc[:80])
+        else:
+            type_text(page, g_pick()); page.click('[data-act=submit]'); g1 = g_wait(1)
+            check(f'[{dev}] KREQ-52 맞춤법 틀린 낱말 (후보 없음, 바른 낱말로 대신)', g1['n'] == 1)
+        # 낱말을 더 이어 5개 → 별 1개, 뜻 카드 + 활용 대화
+        use_ok = 0
+        for k in range(2, 6):
+            w = g_pick()
+            if not w: break
+            type_text(page, w); page.click('[data-act=submit]')
+            t0 = time.time()
+            while time.time() - t0 < 6:
+                if run_js(page, "w => { const u = document.getElementById('usecard'); return !!u && !u.hidden && u.innerText.includes(w); }", w): use_ok += 1; break
+                page.wait_for_timeout(60)
+            g_wait(k)
+        gk = run_js(page, "() => YUNI.game")
+        check(f'[{dev}] KREQ-52 스스로 5개를 이으면 별 1개 (이은 낱말 {gk["n"]}개, 별 {stars() - g_s0})', gk['n'] >= 5 and stars() - g_s0 == 1 and gk['stars'] == 1, json.dumps(gk, ensure_ascii=False)[:200])
+        check(f'[{dev}] KREQ-52/53 윤이 낱말마다 뜻·활용 대화 카드 ({use_ok}/4)', use_ok >= 3)
+        check(f'[{dev}] KREQ-52 로보 낱말은 모두 사전에 있고 끝말이 이어짐', run_js(page, "() => { const c = YUNI.game.chain; const H = (a, b) => { const l = [...a].pop(); const d = HANGUL.dec(l); const alts = [l]; const iy = 'ㅣㅑㅕㅖㅛㅠㅒ'.includes(d.jung); if (d.cho === 'ㄹ') alts.push(HANGUL.comp(iy ? 'ㅇ' : 'ㄴ', d.jung, d.jong)); if (d.cho === 'ㄴ' && iy) alts.push(HANGUL.comp('ㅇ', d.jung, d.jong)); return alts.includes(b[0]); };"
+          " return c.every(x => YUNI.GAME_WORDS.includes(x.w)) && c.slice(1).every((x, i) => H(c[i].w, x.w)); }"))
+        # 모르겠어요 2번 → 낱말 보고 따라 쓰기 (이은 낱말로 세지만 별 계산엔 안 들어감)
+        page.click('[data-act=idk]'); page.wait_for_timeout(300)
+        h1 = run_js(page, "() => document.getElementById('hintcard').innerText")
+        page.click('[data-act=idk]'); page.wait_for_timeout(300)
+        ans = run_js(page, "() => (document.querySelector('#hintcard .answer') || {}).textContent || ''")
+        n_before = gk['n']; solo_before = run_js(page, "() => YUNI.game.solo")
+        type_text(page, ans); page.click('[data-act=submit]'); gh = g_wait(n_before + 1)
+        check(f'[{dev}] KREQ-52 모르겠어요: 1번 그림·첫 글자 힌트, 2번 정답 따라 쓰기 (별 계산 제외)', '힌트' in h1 and '○' in h1 and ans and gh['chain'][-2]['w'] == ans and gh['chain'][-2].get('hinted') and gh['solo'] == solo_before, f'{h1[:30]} / {ans}')
+        page.click('[data-act=stop]'); page.wait_for_selector('.big-stars, .reward')
+        page.screenshot(path=f'{SHOT}/{dev}_52_game_end.png')
+        check(f'[{dev}] KREQ-52 그만하기 → 결과(이은 낱말 수, 최고 기록 저장)', run_js(page, "() => document.body.innerText.includes('이은 낱말') && YUNI.state.game.best >= 6 && YUNI.state.game.plays >= 1"))
+        page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        if dev == 'tab':  # 아빠 화면 끝말잇기 카드·설정
+            page.click('[data-act=parent]'); page.fill('#ans', '1234'); page.click('[data-act=ok]'); page.wait_for_selector('.ptabs')
+            page.click('.ptab[data-arg="progress"]'); page.wait_for_timeout(100)
+            check(f'[{dev}] KREQ-52 아빠 화면: 끝말잇기 기록·몰랐던 낱말·맞춤법 목록', run_js(page, "() => { const t = document.body.innerText; return t.includes('끝말잇기') && t.includes('몰랐던 낱말') && t.includes('꾸뀨') && t.includes('최고 기록'); }"))
+            page.click('.ptab[data-arg="settings"]'); page.wait_for_timeout(100)
+            check(f'[{dev}] KREQ-52/53 아빠 화면 설정: 활용 대화 카드·끝말잇기 버튼 켜고 끄기', run_js(page, "() => !!document.querySelector('input[data-set=useCards]') && !!document.querySelector('input[data-set=gameOn]')"))
+            page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
 
         # 받아쓰기 음성: 띄어 읽기 단위로 끊어서 천천히 (0.8)
         run_js(page, "() => { window.__spoken = []; }")
@@ -440,6 +528,7 @@ with sync_playwright() as p:
         page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
         ko_logs.extend((dev, t) for t in run_js(page, "() => window.__KO_LOG"))
         check(f'[{dev}] 오류 없음 (끝까지)', not errors, str(errors[:3]))
+        cw_warn = run_js(page, "() => YUNI.contentWarnings().warn")
         ctx.close()
 
     # --- KREQ-65 녹음 목록 적용 범위: 하루 흐름에서 실제로 읽은 한국어가 녹음 목록에 있는지 ---
@@ -474,7 +563,9 @@ with sync_playwright() as p:
     check('KREQ-02 오프라인 캐시 목록에 기획서.md', '기획서.md' in sw)
     check('KREQ-65 sw.js가 audio-ko/index.json 캐시 + 녹음 파일 백그라운드 받기, 업데이트 목록에도', "'audio-ko/index.json'" in sw and 'cacheAudio' in sw and "'audio-ko/index.json']" in src)
     check('KREQ-65 녹음 파일이 index.json과 맞음', all(os.path.exists(os.path.join(APP, 'audio-ko', f)) for f in KO_IDX.values()), str(len(KO_IDX)))
-    for rid in ['KREQ-01', 'KREQ-02', 'KREQ-04', 'KREQ-07', 'KREQ-08', 'KREQ-12', 'KREQ-16', 'KREQ-17', 'KREQ-18', 'KREQ-40', 'KREQ-41', 'KREQ-42', 'KREQ-43', 'KREQ-45', 'KREQ-47', 'KREQ-60', 'KREQ-61', 'KREQ-62', 'KREQ-63', 'KREQ-64', 'KREQ-65']:
+    check('KREQ-52/53 낱말 사전(dict)에 단원·급수 낱말의 뜻·활용 대화가 모두 있음 (콘텐츠 점검 경고 없음)', not cw_warn, str(cw_warn[:3]))
+    check('KREQ-53 낱말 사전 녹음: "낱말! 뜻"과 활용 대화가 녹음 목록에', all(k in KO_IDX for k in ['나비! 꽃밭을 날아다니는 예쁜 날개 곤충이에요.', '노란 나비가 꽃에 앉았어!', '끝말잇기 하자!']))
+    for rid in ['KREQ-01', 'KREQ-02', 'KREQ-04', 'KREQ-07', 'KREQ-08', 'KREQ-12', 'KREQ-16', 'KREQ-17', 'KREQ-18', 'KREQ-40', 'KREQ-41', 'KREQ-42', 'KREQ-43', 'KREQ-45', 'KREQ-47', 'KREQ-52', 'KREQ-53', 'KREQ-60', 'KREQ-61', 'KREQ-62', 'KREQ-63', 'KREQ-64', 'KREQ-65']:
         check(f'기획서.md에 {rid} 있음', rid in spec)
     br.close()
 

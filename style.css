@@ -271,6 +271,52 @@ textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 13
 .fixbox.sel { background: var(--miss-bg); color: var(--miss); outline: 4px solid #ff9800; z-index: 1; }
 .fixbox.ok { color: var(--good); background: #f1fbf5; }
 
+/* "이렇게 써요" 활용 대화 카드 (KREQ-53, v0.5.0) */
+.usecard { background: #fff; border: 3px solid #ffd8b8; border-radius: 20px; padding: 10px 14px; max-width: 560px; width: 100%; display: grid; gap: 8px; text-align: left; animation: pop .4s; }
+.use-title { font-weight: 900; color: var(--muted); font-size: 16px; }
+.use-line { display: flex; align-items: center; gap: 10px; }
+.use-line .friend { width: 44px; height: 44px; font-size: 15px; }
+.who { display: grid; justify-items: center; line-height: 1; flex: none; width: 48px; }
+.who span { font-size: 30px; }
+.who small { font-size: 11px; font-weight: 800; color: var(--muted); margin-top: 2px; white-space: nowrap; }
+.use-say { background: var(--bg); border-radius: 16px; padding: 8px 14px; font-size: var(--fs-md); font-weight: 700; line-height: 1.45; }
+.use-say .uw { color: var(--primary); text-decoration: underline; text-decoration-thickness: 3px; text-underline-offset: 4px; }
+.usecard .next-row { margin-top: 2px; }
+
+/* 끝말잇기 놀이 (KREQ-52, v0.5.0) */
+.game-title { flex: 1; text-align: left; margin: 0; font-size: var(--fs-sm); }
+.game-title b { color: var(--primary); }
+.game-btn { background: #e6f4ff; }
+.chain { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; justify-content: center; min-height: 36px; max-width: 560px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; background: var(--card); border-radius: 999px; padding: 4px 12px; font-weight: 800; font-size: var(--fs-sm); box-shadow: var(--shadow); }
+.chip.robot { background: #e6f4ff; }
+.chip.hinted { background: #fff8d6; }
+.chain .link { color: var(--muted); font-style: normal; font-weight: 900; }
+.turn { width: 100%; max-width: 560px; display: grid; gap: 8px; }
+.wcard { background: var(--card); border-radius: 20px; padding: 10px 16px; box-shadow: var(--shadow); display: grid; gap: 6px; text-align: left; }
+.wcard.yuni { background: #fff8f1; }
+.wcard-head { display: flex; align-items: center; gap: 12px; }
+.wcard-head .pic.sm { font-size: 48px; line-height: 1; }
+.wword { font-size: clamp(34px, 6vw, 48px); font-weight: 900; letter-spacing: 2px; cursor: pointer; }
+.wword:active { color: var(--primary); }
+.wmean { font-size: var(--fs-sm); font-weight: 700; color: var(--muted); line-height: 1.45; }
+.turn-ask { background: #fff8d6; border: 3px solid #ffe08a; border-radius: 18px; padding: 10px 14px; font-size: var(--fs-md); font-weight: 800; text-align: center; }
+.turn-ask .firstch { font-size: 1.6em; color: var(--primary); }
+.turn-ask small { font-size: 14px; color: var(--muted); margin: 0 6px; }
+.game-btns { justify-content: center; flex-wrap: wrap; }
+.hint-pic { font-size: 64px; text-align: center; line-height: 1.1; }
+.spell { display: flex; align-items: center; justify-content: center; gap: 12px; font-size: clamp(28px, 5vw, 40px); font-weight: 900; }
+.spell .was { letter-spacing: 2px; }
+.spell i { font-style: normal; color: var(--muted); }
+.spell .answer { font-size: 1em; }
+.chain-result { display: flex; flex-wrap: wrap; gap: 6px 14px; justify-content: center; }
+@media (max-width: 600px) {
+  .game-title { font-size: 14px; }
+  .game-title .gl { display: none; }
+  .wcard-head .pic.sm { font-size: 36px; }
+  .use-say { font-size: 17px; padding: 6px 10px; }
+}
+
 /* 결과·아빠 화면 */
 .result-list { text-align: left; font-size: var(--fs-md); font-weight: 700; line-height: 1.8; width: min(560px, 100%); }
 .rates { display: grid; gap: 8px; }

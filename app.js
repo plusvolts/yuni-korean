@@ -274,7 +274,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.4.1';
+  const APP_VERSION = '0.5.0';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -296,13 +296,15 @@ window.HANGUL = (() => {
         robotName: '로보', childName: '윤이', dailyLimit: 20, koVoice: '', koVoiceMode: 'rec', koRate: 0.9, dictRate: 0.8, listenMax: 0,
         spaceOn: true, spaceFrom: 7, punctOn: true, punctFrom: 2, classSpace: true, classPunct: true,
         goalStars: 50, goalText: '아빠와 약속한 선물',
+        gameOn: true, useCards: true, // v0.5.0: 끝말잇기 놀이 보이기, 맞힌 뒤 "이렇게 써요" 카드
       },
       pos: { u: 0, d: 1, s: 0 }, done: {}, stars: 0, goalBase: 0,
       srs: {}, days: [], log: {}, stickers: {}, override: '', rewards: [],
       grade: 10, gradeOk: {}, badges: {}, ruleStats: {}, cls: { title: '', date: '', items: [] }, special: [], dictCount: 0,
+      game: { plays: 0, best: 0, words: 0, stars: 0, unknown: {}, spelled: {} }, // v0.5.0 끝말잇기 기록 (KREQ-52)
     };
   }
-  function merge(o) { const d = defaults(); return Object.assign(d, o, { settings: Object.assign(d.settings, o.settings || {}), cls: Object.assign(d.cls, o.cls || {}) }); }
+  function merge(o) { const d = defaults(); return Object.assign(d, o, { settings: Object.assign(d.settings, o.settings || {}), cls: Object.assign(d.cls, o.cls || {}), game: Object.assign(d.game, o.game || {}) }); }
   function load() {
     try { const raw = localStorage.getItem(KEY); if (raw) return merge(JSON.parse(raw)); } catch (e) { /* 저장소 사용 불가 */ }
     return defaults();
@@ -344,6 +346,25 @@ window.HANGUL = (() => {
   U.forEach((u, ui) => (u.words || []).forEach(w => { WORDS[w.word] = { ...w, u: ui }; }));
   const infoCache = {};
   const winfo = w => { const k = w.word + '|' + (w.sound || ''); return infoCache[k] || (infoCache[k] = HG.info(w.word, w.sound)); };
+  /* 낱말 사전 (content.js dict, v0.5.0): 뜻·활용 대화. 끝말잇기(KREQ-52)와 "이렇게 써요" 카드(KREQ-53)에 써요 */
+  const DICT = C.dict || {};
+  const dictOf = w => DICT[normText(w)] || null;
+  const meanSay = w => { const d = dictOf(w); return d && d.mean ? `${normText(w)}! ${d.mean}` : ''; }; // 녹음 키: "낱말! 뜻"
+  // use: "누가: 말 / 누가: 말" → [{who, say}]
+  const useLines = w => { const d = dictOf(w); if (!d || !d.use) return []; return d.use.split(' / ').map(l => { const m = l.match(/^([^:]+):\s*(.+)$/); return m ? { who: m[1].trim(), say: m[2].trim() } : { who: '', say: l.trim() }; }); };
+  const WHO_ICON = { '로보': '🤖', '윤이': '🧒', '아빠': '👨', '엄마': '👩', '선생님': '👩‍🏫', '할머니': '👵', '할아버지': '👴' };
+  function whoHtml(who) {
+    const fid = Object.keys(C.friends).find(k => C.friends[k].name === who);
+    if (fid) return friendHtml(fid);
+    const name = who === '로보' ? robotName() : who === '윤이' ? (S.settings.childName || '윤이') : who;
+    return `<div class="who"><span>${WHO_ICON[who] || '🙂'}</span><small>${esc(name)}</small></div>`;
+  }
+  // 대화 한 줄에서 낱말을 진하게 (조사가 붙어도 앞부분이 같으면)
+  const markWord = (say, w) => { const i = say.indexOf(w); return i < 0 ? esc(say) : `${esc(say.slice(0, i))}<b class="uw">${esc(w)}</b>${esc(say.slice(i + w.length))}`; };
+  function useCardHtml(w) {
+    const lines = useLines(w); if (!lines.length) return '';
+    return `<div class="use-title">💬 이렇게 써요</div>${lines.map(l => `<div class="use-line">${l.who ? whoHtml(l.who) : ''}<span class="use-say">${markWord(l.say, normText(w))}</span></div>`).join('')}`;
+  }
 
   /* ================= 소리 ================= */
   let voices = [];
@@ -536,7 +557,7 @@ window.HANGUL = (() => {
     ko('오늘 국어는 여기까지! 정말 잘했어요.');
   }
   setInterval(() => {
-    if (screen === 'lesson' && !document.hidden) { todayLog().sec += 10; save(); }
+    if ((screen === 'lesson' || screen === 'game') && !document.hidden) { todayLog().sec += 10; save(); } // 끝말잇기도 하루 시간에 들어가요
   }, 10000);
 
   /* ================= 우리 반 받아쓰기 ================= */
@@ -574,6 +595,7 @@ window.HANGUL = (() => {
         <div class="home-links">
           <button class="btn" data-act="picker">🧭 단계 고르기</button>
           <button class="btn" data-act="stickers">📒 스티커북</button>
+          ${S.settings.gameOn !== false ? '<button class="btn game-btn" data-act="game">🔗 끝말잇기</button>' : ''}
           ${cls ? `<button class="btn cls-btn" data-act="cls">📝 우리 반 받아쓰기<small>${esc(clsLabel())}</small></button>` : ''}
         </div>
         <button class="goal card" data-act="rewards" style="text-align:left"><div class="row"><b>🎁 ${esc(S.settings.goalText)}</b><div class="spacer"></div><span class="muted">${g >= goal ? '달성! 🎉' : `${g} / ${goal}`}</span></div>
@@ -586,6 +608,7 @@ window.HANGUL = (() => {
       stickers: stickerScreen,
       rewards: rewardScreen,
       cls: startClassPractice,
+      game: startGame,
       parent: () => gateScreen(parentScreen),
       hello: () => { hush(); ko(`안녕, ${callName()}! 오늘도 같이 받아쓰기 하자!`); },
       install: async () => { if (installEvt) { installEvt.prompt(); try { await installEvt.userChoice; } catch (e) { /* */ } installEvt = null; homeScreen(); } },
@@ -830,16 +853,19 @@ window.HANGUL = (() => {
   // 하루 끝 보너스 3개 포함 하루 50개 이하 (v0.1.1, 아빠 요청으로 20 → 50). 정답률·복습 기록은 지금처럼 첫 시도 기준
   const DAY_STAR_MAX = 50, DAY_BONUS = 3;
   const actKey = () => `${L.special ? 'c' : L.s}:${L.i}`;
+  // 오늘 더 받을 수 있는 별 (하루 끝 보너스 자리는 남겨 둬요). 수업·끝말잇기가 같이 써요
+  const starRoom = () => { const tl = todayLog(); return DAY_STAR_MAX - (tl.bonus ? 0 : DAY_BONUS) - tl.stars; };
+  function addStars(n) {
+    n = Math.max(0, Math.min(n, starRoom()));
+    if (n) { S.stars += n; todayLog().stars += n; save(); const el = document.querySelector('.stars'); if (el) el.textContent = `⭐ ${S.stars}`; }
+    return n;
+  }
   function award(solved) {
-    const key = actKey(); const tl = todayLog();
+    const key = actKey();
     let n = solved ? 1 : 0;
-    const room = DAY_STAR_MAX - (tl.bonus ? 0 : DAY_BONUS) - tl.stars;
-    if (L.awarded[key] || room < n) n = 0; // 이전 버튼으로 다시 풀어도 별은 한 번만
+    if (L.awarded[key]) n = 0; // 이전 버튼으로 다시 풀어도 별은 한 번만
     L.awarded[key] = 1;
-    if (n) {
-      S.stars += n; L.earned += n; tl.stars += n; save();
-      const el = document.querySelector('.stars'); if (el) el.textContent = `⭐ ${S.stars}`;
-    }
+    n = addStars(n); L.earned += n;
     return n;
   }
   // 규칙별 정답률: 문제마다 첫 시도만 기록
@@ -886,7 +912,22 @@ window.HANGUL = (() => {
       <div class="stage${opts.split ? ' split' : ''}${opts.kb ? ' kb' : ''}">${inner}</div>
     </div>`;
   }
-  const baseHandlers = () => ({ quit: homeScreen, prev: prevAct });
+  const baseHandlers = () => ({ quit: homeScreen, prev: prevAct, usenext: () => { hush(); nextAct(); } });
+  /* "이렇게 써요" 카드 (KREQ-53): 맞힌 뒤(정답을 따라 쓴 뒤에도) 그 낱말을 쓴 대화 한두 줄을 보여 주고 읽어요.
+     다 읽은 뒤 잠깐 있다가 넘어가고, "다음 ▶"으로 바로 넘어갈 수도 있어요. 사전에 없는 말(우리 반 문장 등)은 건너뛰어요 */
+  const USE_SLOT = '<div class="usecard" id="usecard" hidden></div>';
+  async function showUse(word, token) {
+    if (S.settings.useCards === false) return true;
+    const html = useCardHtml(word); const el = document.getElementById('usecard');
+    if (!html || !el) return true;
+    const my = token === undefined ? actToken : token; const tok = () => (token === undefined ? actToken : gameToken);
+    el.hidden = false; el.innerHTML = html + (token === undefined ? '<div class="next-row"><button class="btn small primary" data-act="usenext">다음 ▶</button></div>' : '');
+    try { el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { /* */ }
+    for (const l of useLines(word)) { if (my !== tok()) return false; await ko(l.say); await sleep(150); }
+    if (my !== tok()) return false;
+    await sleep(900);
+    return my === tok();
+  }
   // 이전 문제로 (단계 첫 문제면 앞 단계 마지막 문제로). 만들어 둔 문제를 다시 써서 같은 문제가 나와요
   function prevAct() {
     hush();
@@ -942,6 +983,8 @@ window.HANGUL = (() => {
       if (cfg.after) cfg.after(f.att);
       if (!opts.quiet) await dictate(text);
       if (my === actToken && n && Math.random() < 0.6) await ko(praise());
+      if (my !== actToken) return;
+      if (!(await showUse(text))) return; // 이렇게 써요 (KREQ-53)
       await sleep(350); if (my === actToken) nextAct();
     };
     return f;
@@ -989,6 +1032,7 @@ window.HANGUL = (() => {
         ${listenBtns()}
         <div class="hint" id="hint"></div>
         <div class="hintcard" id="hintcard" hidden></div>
+        ${USE_SLOT}
       </div>
       <div class="choices text-choices">${a.opts.map(x => `<button class="choice text big" data-act="pick" data-arg="${esc(x)}">${esc(x)}</button>`).join('')}</div>`, { split: true }), {
       ...baseHandlers(),
@@ -1039,6 +1083,7 @@ window.HANGUL = (() => {
         ${listenBtns()}
         <div class="hint" id="hint"></div>
         <div class="hintcard" id="hintcard" hidden></div>
+        ${USE_SLOT}
       </div>
       <div class="prompt">
         <div class="jong-word">${wordRow()}</div>
@@ -1097,6 +1142,7 @@ window.HANGUL = (() => {
         ${listenBtns()}
         <div class="hint" id="hint"></div>
         <div class="hintcard" id="hintcard" hidden></div>
+        ${USE_SLOT}
       </div>
       <div class="prompt">
         <div class="slots" id="slots">${slotHtml()}</div>
@@ -1210,6 +1256,7 @@ window.HANGUL = (() => {
         <div class="hint" id="hint"></div>
         <div class="why" id="why" hidden></div>
         <div class="hintcard" id="hintcard" hidden></div>
+        ${USE_SLOT}
         <div class="next-row" id="skipRow" hidden><button class="btn small" data-act="skip">다음 ▶</button></div>
       </div>
       <div class="kb-wrap">${kbHtml(a.punct || /[.,?!]/.test(a.text))}</div>`, { split: true, kb: true }), {
@@ -1240,7 +1287,7 @@ window.HANGUL = (() => {
           showWhy(null);
           if (!copyMode) recordDict(a, f.att === 0);
           L.results.push({ text: a.text, ok: f.att === 0 && !copyMode });
-          if (copyMode) { f.done = true; ding(); const n = award(true); flash(n ? '⭐' : '👍'); setHint(n ? '잘 따라 썼어요! ⭐' : '잘 따라 썼어요!'); const my = actToken; await ko('잘 따라 썼어요!'); await sleep(300); if (my === actToken) nextAct(); return; }
+          if (copyMode) { f.done = true; ding(); const n = award(true); flash(n ? '⭐' : '👍'); setHint(n ? '잘 따라 썼어요! ⭐' : '잘 따라 썼어요!'); const my = actToken; await ko('잘 따라 썼어요!'); if (my !== actToken) return; if (!(await showUse(a.text))) return; await sleep(300); if (my === actToken) nextAct(); return; }
           setHint('정답! 🎉'); return f.right({ quiet: true }).then(() => {});
         }
         if (copyMode) { showWhy(res, 2); setHint('주황색 글자를 정답과 비교해 봐요. 맞게 따라 쓰면 별을 받아요'); return; }
@@ -1300,6 +1347,7 @@ window.HANGUL = (() => {
         ${listenBtns()}
         <div class="hint" id="hint"></div>
         <div class="hintcard" id="hintcard" hidden></div>
+        ${USE_SLOT}
       </div>
       <div class="prompt">
         <div class="paper-label">은후의 받아쓰기 공책</div>
@@ -1326,6 +1374,208 @@ window.HANGUL = (() => {
     f.reveal2 = () => document.querySelectorAll('.fixbox').forEach(b => { if (a.bad.includes(+b.dataset.arg) && !fixed.has(+b.dataset.arg)) b.classList.add('glow'); });
     const my = actToken;
     (async () => { await ko('은후가 받아쓰기를 했는데, 틀린 글자가 있대. 찾아서 고쳐 줄래?'); if (my === actToken) dictate(w.word); })();
+  }
+
+  /* ================= 끝말잇기 놀이 (KREQ-52, v0.5.0) =================
+   * 로보와 번갈아 끝말을 이어요. 윤이는 윤이 자판으로 써요 (기본 키보드 안 씀).
+   * - 사전(content.js dict)에 있는 낱말만 인정. 맞춤법이 조금 틀렸으면(소리 나는 대로 썼거나 글자 하나가 다르면) 바른 글자를 알려 주고 그 낱말로 인정
+   * - 사전에 없으면 "로보가 모르는 낱말" → 다시 쓰기 (땡·X 없음). 아빠 화면에 그 낱말이 모여요
+   * - 낱말마다 뜻·그림·활용 대화를 보여 주고 읽어요. 두음 법칙(라→나, 리→이, 녀→여)도 인정
+   * - 힌트: 모르겠어요 1번 = 그림과 첫 글자, 2번 = 낱말 보고 따라 쓰기(이은 낱말로 세지만 별 계산에는 안 들어가요)
+   * - 별: 스스로 이은 낱말 5개마다 1개 (하루 최대 50개 안에서). 로보가 못 이으면 윤이가 이긴 거예요 */
+  const GAME_WORDS = Object.keys(DICT).filter(w => DICT[w].game !== false && HG.syls(w).every(HG.isSyl));
+  const GAME_STARTS = {}; GAME_WORDS.forEach(w => { (GAME_STARTS[w[0]] = GAME_STARTS[w[0]] || []).push(w); });
+  const lastCh = w => HG.syls(w).slice(-1)[0];
+  function headAlts(ch) { // 두음 법칙: 라→나, 리→이, 녀→여
+    const d = HG.dec(ch); if (!d) return [ch]; const out = [ch]; const iy = 'ㅣㅑㅕㅖㅛㅠㅒ'.includes(d.jung);
+    if (d.cho === 'ㄹ') out.push(HG.comp(iy ? 'ㅇ' : 'ㄴ', d.jung, d.jong));
+    if (d.cho === 'ㄴ' && iy) out.push(HG.comp('ㅇ', d.jung, d.jong));
+    return [...new Set(out)];
+  }
+  const linksOk = (prev, w) => !prev || headAlts(lastCh(prev)).includes(w[0]);
+  const gameCands = (prev, used) => headAlts(lastCh(prev)).flatMap(c => GAME_STARTS[c] || []).filter(w => !used.has(w));
+  const nextCount = (w, used) => gameCands(w, new Set([...used, w])).length;
+  // w 뒤로 depth번 더 이어 갈 길이 있는지 (로보가 금방 막히는 낱말을 피하려고 몇 수 앞을 봐요)
+  function deep(w, used, depth) { if (depth <= 0) return true; const u = new Set([...used, w]); return gameCands(w, u).some(r => deep(r, u, depth - 1)); }
+  // 로보가 고르는 낱말: 윤이가 이어 갈 낱말이 2개 이상 남고 그 뒤로도 길이 있는 것, 짧은 것 먼저
+  function robotPick(prev, used, r) {
+    const cands = prev ? gameCands(prev, used) : GAME_WORDS.filter(w => HG.syls(w).length <= 3);
+    if (!cands.length) return null;
+    const score = w => { const u = new Set([...used, w]); const nx = gameCands(w, u); const good = nx.filter(x => deep(x, u, 2)).length;
+      return (good >= 2 ? 0 : good === 1 ? 5 : nx.length ? 15 : 25) + Math.min(HG.syls(w).length, 4); };
+    return shuffle(cands, r).sort((a, b) => score(a) - score(b))[0];
+  }
+  // 윤이에게 힌트로 줄 낱말 (이어 갈 수 있는 것)
+  const hintWord = (prev, used, r) => robotPick(prev, used, r);
+  // 맞춤법이 조금 틀린 낱말: 소리 나는 대로 썼거나, 글자 하나(자모 2개 이하)가 다른 사전 낱말
+  function nearWord(text, prev, used) {
+    const T = HG.syls(text);
+    const pool = GAME_WORDS.filter(w => !used.has(w) && HG.syls(w).length === T.length && linksOk(prev, w));
+    for (const w of pool) { const inf = HG.info(w, (WORDS[w] || {}).sound); if (inf.differs && inf.sound === text) return w; }
+    let best = null, bestD = 9;
+    for (const w of pool) {
+      const W = HG.syls(w); let diff = 0, jd = 0;
+      for (let i = 0; i < W.length; i++) if (W[i] !== T[i]) { diff++; const a = HG.dec(W[i]), b = HG.dec(T[i]); jd += !a || !b ? 3 : (a.cho !== b.cho) + (a.jung !== b.jung) + (a.jong !== b.jong); }
+      if (diff === 1 && jd <= 2 && jd < bestD) { best = w; bestD = jd; }
+    }
+    return best;
+  }
+  let G = null; let gameToken = 0;
+  function startGame() {
+    if (lockReason()) return lockedScreen();
+    if (!S.days.includes(today())) S.days.push(today());
+    S.game.plays = (S.game.plays || 0) + 1; save();
+    G = { used: new Set(), chain: [], prev: null, n: 0, solo: 0, stars: 0, att: 0, hint: 0, hintW: null, busy: false, done: false, r: rng('game' + today() + S.game.plays), typed: null };
+    gameScreen();
+    robotTurn();
+  }
+  const gameChainHtml = () => G.chain.length ? G.chain.slice(-8).map(c => `<span class="chip${c.who === 'robot' ? ' robot' : ''}${c.hinted ? ' hinted' : ''}">${c.who === 'robot' ? '🤖' : '🧒'} ${esc(c.w)}</span>`).join('<i class="link">›</i>') : '<span class="muted">여기에 이은 낱말이 쌓여요</span>';
+  const gameCountHtml = () => `<span class="gl">이은 낱말 </span><b>${G.n}</b>개`;
+  const starLeftHtml = () => G.solo % 5 ? `<small class="muted">⭐까지 ${5 - G.solo % 5}개 더</small>` : '';
+  function gameScreen() {
+    const cp = new HG.Composer(); G.cp = cp;
+    const redraw = () => { const g = document.getElementById('grid'); if (g) g.innerHTML = gridHtml(cp); };
+    G.redraw = redraw;
+    render('game', `<div class="screen">
+      <div class="topbar">
+        <button class="icon-btn" data-act="quit" aria-label="처음으로">🏠</button>
+        <div class="step-name game-title">🔗 끝말잇기 · <span id="gcount">${gameCountHtml()}</span></div>
+        <div class="spacer"></div>
+        <div class="stars">⭐ ${S.stars}</div>
+      </div>
+      <div class="stage split kb">
+        <div class="prompt dict-left game-left">
+          <div class="chain" id="chain">${gameChainHtml()}</div>
+          <div class="turn" id="turn"></div>
+          <div class="grid-paper" id="grid" data-act="curend">${gridHtml(cp)}</div>
+          <div class="hint" id="hint"></div>
+          <div class="hintcard" id="hintcard" hidden></div>
+          ${USE_SLOT}
+          <div class="row game-btns"><button class="btn small" data-act="idk">🤔 모르겠어요</button><button class="btn small" data-act="stop">그만하기</button></div>
+        </div>
+        <div class="kb-wrap">${kbHtml(false)}</div>
+      </div>
+    </div>`, {
+      quit: () => { if (G.n) return gameEnd('quit'); homeScreen(); },
+      stop: () => gameEnd('quit'),
+      key: k => { if (G.busy) return; cp.type(k); redraw(); },
+      bs: () => { if (G.busy) return; cp.back(); redraw(); },
+      sp: () => { /* 끝말잇기는 한 낱말만 써요 */ toast('한 낱말만 써요'); },
+      left: () => { cp.setCursor(cp.cur - (cp.c ? 0 : 1)); redraw(); },
+      right: () => { cp.setCursor(cp.cur + 1); redraw(); },
+      cur: (i, el, e) => { e.stopPropagation(); if (+i >= 0) { cp.setCursor(+i + 1); redraw(); } },
+      curend: () => { cp.setCursor(cp.chars.length + 1); redraw(); },
+      idk: gameHint,
+      submit: gameSubmit,
+      playw: w => { hush(); ko(meanSay(w) || w); },
+    });
+  }
+  const setTurn = html => { const el = document.getElementById('turn'); if (el) el.innerHTML = html; };
+  const gameRefresh = () => { const c = document.getElementById('chain'); if (c) c.innerHTML = gameChainHtml(); const n = document.getElementById('gcount'); if (n) n.innerHTML = gameCountHtml(); };
+  const hideCards = () => { ['hintcard', 'usecard'].forEach(id => { const el = document.getElementById(id); if (el) { el.hidden = true; el.innerHTML = ''; } }); setHint(''); };
+  function wordCardHtml(w, who) {
+    const d = dictOf(w) || {};
+    return `<div class="wcard"><div class="wcard-head">${who === 'robot' ? `<span class="who"><span>🤖</span><small>${esc(robotName())}</small></span>` : ''}<span class="pic sm">${esc(d.img || '')}</span><b class="wword" data-act="playw" data-arg="${esc(w)}">${esc(w)}</b></div>
+      ${d.mean ? `<div class="wmean">${esc(d.mean)}</div>` : ''}</div>`;
+  }
+  const promptHtml = () => { const ch = lastCh(G.prev); const alts = headAlts(ch).slice(1); return `<div class="turn-ask">👉 <b class="firstch">${esc(ch)}</b>${alts.length ? `<small>(또는 ${alts.map(esc).join(', ')})</small>` : ''} 로 시작하는 낱말을 써요 ${starLeftHtml()}</div>`; };
+  async function robotTurn() {
+    const my = ++gameToken; G.busy = true; G.att = 0; G.hint = 0; G.hintW = null; hideCards();
+    const w = robotPick(G.prev, G.used, G.r);
+    if (!w) { G.busy = false; return gameEnd('robotLost'); }
+    G.used.add(w); G.chain.push({ w, who: 'robot' }); G.prev = w; gameRefresh();
+    setTurn(wordCardHtml(w, 'robot'));
+    if (G.chain.length === 1) { await ko('끝말잇기 하자! 내가 먼저 할게.'); if (my !== gameToken) return; }
+    await ko(meanSay(w) || w);
+    if (my !== gameToken) return;
+    setTurn(wordCardHtml(w, 'robot') + promptHtml());
+    G.cp.setText(''); G.redraw(); G.busy = false;
+    await ko('이제 네 차례!');
+  }
+  async function gameAccept(w, typed, hinted) {
+    const my = gameToken; G.busy = true;
+    G.used.add(w); G.chain.push({ w, who: 'yuni', hinted }); G.prev = w; G.n++; if (!hinted) G.solo++;
+    S.game.words = (S.game.words || 0) + 1; save(); gameRefresh();
+    G.cp.setText(''); G.cp.clearMarks(); G.redraw();
+    ding(); flash('👍');
+    const d = dictOf(w) || {};
+    if (typed && typed !== w) { // 맞춤법 알려주기
+      S.game.spelled[typed] = w; save();
+      const el = document.getElementById('hintcard'); el.hidden = false;
+      el.innerHTML = `<b>✏️ 이렇게 써요</b><div class="spell"><span class="was">${diffHtml(typed, w)}</span><i>→</i><span class="answer">${esc(w)}</span></div><div>다음엔 맞게 써 봐요!</div>`;
+      await ko('조금 다르게 썼어. 바른 글자를 봐. 다음엔 맞게 써 봐요!'); if (my !== gameToken) return;
+    }
+    setTurn(`<div class="wcard yuni"><div class="wcard-head"><span class="who"><span>🧒</span><small>${esc(S.settings.childName || '윤이')}</small></span><span class="pic sm">${esc(d.img || '')}</span><b class="wword" data-act="playw" data-arg="${esc(w)}">${esc(w)}</b></div>${d.mean ? `<div class="wmean">${esc(d.mean)}</div>` : ''}</div>`);
+    await ko(meanSay(w) || w); if (my !== gameToken) return;
+    if (!(await showUse(w, my))) return; // 활용 대화 (KREQ-53)
+    if (!hinted && G.solo % 5 === 0) {
+      const n = addStars(1); G.stars += n; S.game.stars = (S.game.stars || 0) + n; save();
+      flash(n ? '⭐' : '🎉'); setHint(n ? '낱말 다섯 개를 이었어요! ⭐' : '낱말 다섯 개를 이었어요!');
+      await ko('낱말 다섯 개를 이었어! 별 하나!'); if (my !== gameToken) return;
+    }
+    robotTurn(); // 로보가 못 이으면 robotTurn에서 윤이 승리로 끝나요
+  }
+  async function gameSubmit() {
+    if (G.busy || G.done) return;
+    const cp = G.cp; cp.commit(); const text = normText(cp.text()).replace(/\s+/g, '');
+    if (!text) { toast('먼저 써 봐요'); return; }
+    hush(); const my = ++gameToken;
+    if (!HG.syls(text).every(HG.isSyl)) { soft(); setHint('한글 글자로 끝까지 써요 (자음+모음)'); return; }
+    if (text.length < 2 && !DICT[text]) { soft(); setHint('두 글자 이상 낱말을 써요'); return; }
+    const inDict = GAME_WORDS.includes(text);
+    if (inDict && G.used.has(text)) { soft(); setHint(`'${text}'는 이미 나왔어요. 다른 낱말을 써 봐요`); await ko('그 낱말은 이미 나왔어. 다른 낱말을 써 볼까?'); return; }
+    if (inDict && linksOk(G.prev, text)) { hideCards(); return gameAccept(text, text, G.hint >= 2); }
+    const near = nearWord(text, G.prev, G.used);
+    if (near) { hideCards(); return gameAccept(near, text, G.hint >= 2); }
+    // 틀렸을 때: 부드러운 소리, 주황 표시, 힌트 (땡·X 없음)
+    G.att++; soft();
+    cp.clearMarks();
+    if (inDict || DICT[text]) { // 사전에는 있는데 첫 글자가 안 이어져요
+      if (cp.meta[0]) cp.meta[0].w = true; cp.endMiss = false; G.redraw();
+      setHint(`'${lastCh(G.prev)}'로 시작하는 낱말이어야 해요`); await ko('첫 글자를 다시 봐. 앞 낱말의 끝 글자로 시작해야 해.');
+    } else {
+      S.game.unknown[text] = (S.game.unknown[text] || 0) + 1; save();
+      cp.meta.forEach(m => { m.w = true; }); G.redraw();
+      setHint(`'${text}'는 ${robotName()}가 모르는 낱말이에요. 다른 낱말을 써 볼까?`); await ko('그 낱말은 내가 몰라. 다른 낱말을 써 볼까?');
+    }
+    if (my !== gameToken) return;
+    if (G.att >= 2) gameHint(true); // 두 번 막히면 힌트 카드를 보여 줘요 (KREQ-07 흐름)
+  }
+  // 모르겠어요: 1번 = 그림·첫 글자 힌트, 2번 = 낱말을 보고 따라 쓰기. auto = 두 번 틀려서 자동으로 나온 힌트(안내 글은 그대로)
+  async function gameHint(auto) {
+    if (G.busy || G.done) return;
+    if (auto !== true) hush(); const my = ++gameToken;
+    G.hintW = G.hintW || hintWord(G.prev, G.used, G.r);
+    const el = document.getElementById('hintcard'); if (!el) return;
+    if (!G.hintW) { // 이어 갈 낱말이 없어요 → 비김
+      setHint(''); await ko('이 글자로 시작하는 낱말은 나도 몰라. 비겼어!'); if (my === gameToken) gameEnd('draw'); return;
+    }
+    G.hint = Math.min(2, G.hint + 1);
+    const w = G.hintW; const d = dictOf(w) || {}; const W = HG.syls(w);
+    el.hidden = false;
+    if (G.hint === 1) {
+      el.innerHTML = `<b>💡 힌트</b><div class="hint-pic">${esc(d.img || '❔')}</div><div class="answer">${esc(W[0])}${W.slice(1).map(() => '○').join('')}</div><div>${esc(d.mean || '')}</div>`;
+      if (auto !== true) setHint('그림을 보고 생각해 봐요 👉'); await ko('힌트! 그림을 보고 생각해 봐.'); // 뜻은 글로만 (읽으면 낱말이 들려요)
+    } else {
+      el.innerHTML = `<b>정답을 보고 따라 써요</b><div class="hint-pic">${esc(d.img || '')}</div><div class="answer">${esc(w)}</div>`;
+      G.cp.setText(''); G.cp.clearMarks(); G.redraw(); setHint('낱말을 보고 따라 써요 ✏️');
+      await ko('낱말을 보고 따라 써 봐.');
+    }
+  }
+  function gameEnd(why) {
+    if (!G || G.done) return; G.done = true; gameToken++;
+    if (G.n > (S.game.best || 0)) S.game.best = G.n; save();
+    const yuni = G.chain.filter(c => c.who === 'yuni');
+    const msg = why === 'robotLost' ? `${robotName()}가 못 이었어! ${S.settings.childName || '윤이'} 승리! 🏆` : why === 'draw' ? '둘 다 못 이었어! 비겼어요' : '끝말잇기 끝!';
+    render('reward', `<div class="screen"><div class="reward">
+      <div class="robot">${why === 'robotLost' ? '🏆' : '🔗'}</div>
+      <div class="bubble">${esc(msg)}<small>이은 낱말 ${G.n}개${S.game.best === G.n && G.n > 0 ? ' · 최고 기록!' : ` · 최고 기록 ${S.game.best || 0}개`}</small></div>
+      ${G.stars ? `<div class="big-stars">⭐ +${G.stars}</div>` : '<p class="muted" style="margin:0">스스로 5개를 이으면 별 1개!</p>'}
+      ${yuni.length ? `<div class="card result-list chain-result">${yuni.map(c => `<span>${c.hinted ? '💡' : '✅'} ${esc(c.w)}</span>`).join('')}</div>` : ''}
+      <div class="home-links"><button class="btn" data-act="again">한 번 더</button><button class="btn primary" data-act="home">끝!</button></div>
+    </div></div>`, { home: homeScreen, again: startGame });
+    if (why === 'robotLost') { confetti(); tone([523, 659, 784, 1046], 0.16); }
+    ko(why === 'robotLost' ? '내가 못 이었어! 네가 이겼어!' : why === 'draw' ? '둘 다 못 이었어! 비겼어!' : G.n >= 5 ? '끝말잇기 끝! 정말 잘했어!' : '끝말잇기 끝! 다음에 또 하자!');
   }
 
   /* ================= 하루 끝 ================= */
@@ -1585,6 +1835,11 @@ window.HANGUL = (() => {
       if (ok && !ok()) warn.push(`${ui + 1}단원 ${un.title}: "${w.word}" [${inf.sound}]는 이 단원 규칙과 맞지 않아요`);
       const p = HG.pron(w.word).text; if (w.sound && w.sound !== p) note.push(`"${w.word}": 적힌 소리 [${w.sound}], 발음 규칙 계산 [${p}] (사이시옷 소리 등은 적힌 소리를 써요)`);
     }));
+    // 낱말 사전(dict): 단원·급수 낱말이 모두 있어야 "이렇게 써요" 카드가 나와요 (KREQ-53). 끝말잇기에서 막히는 낱말은 참고로
+    const need = new Set(); U.forEach(un => (un.words || []).forEach(w => need.add(w.word))); C.grades.forEach(g => g.items.forEach(it => { if (!/\s/.test(normText(it.text))) need.add(normText(it.text)); }));
+    need.forEach(w => { const d = DICT[w]; if (!d || !d.mean || !d.use) warn.push(`낱말 사전(dict)에 "${w}"의 뜻·활용 대화가 없어요 (content.js dict에 추가)`); });
+    const dead = GAME_WORDS.filter(w => !gameCands(w, new Set([w])).length);
+    if (dead.length) note.push(`끝말잇기: 뒤를 이을 낱말이 없는 낱말 ${dead.length}개 (${dead.slice(0, 12).join(', ')}${dead.length > 12 ? ' …' : ''}) — 로보는 이 낱말을 피하고, 윤이가 쓰면 윤이가 이겨요`);
     return { warn, note };
   }
 
@@ -1678,6 +1933,13 @@ window.HANGUL = (() => {
         <div id="clsRows">${clsRowsHtml()}</div>
         <div class="row" style="flex-wrap:wrap"><button class="btn small" data-act="hundred">💯 학교 받아쓰기 100점 스티커 주기</button></div>
       </div>
+      <div class="card"><h3>🔗 끝말잇기</h3>
+        <div class="kv"><div>놀이 횟수<b>${S.game.plays || 0}번</b></div><div>최고 기록<b>${S.game.best || 0}개</b></div><div>이은 낱말<b>${S.game.words || 0}개</b></div><div>받은 별<b>${S.game.stars || 0}개</b></div></div>
+        <p class="muted">사전에 ${GAME_WORDS.length}개 낱말이 있어요. 스스로 5개를 이을 때마다 별 1개(하루 50개 안에서). 윤이가 쓴 낱말이 사전에 없으면 아래에 모여요 — 바른 낱말이면 <b>content.js</b>의 dict에 뜻·대화를 넣어 주세요.</p>
+        ${Object.keys(S.game.unknown || {}).length ? `<h3 style="margin-top:10px">${esc(robotName())}가 몰랐던 낱말</h3><p>${Object.entries(S.game.unknown).sort((a, b) => b[1] - a[1]).map(([w, n]) => `<span class="chip">${esc(w)}${n > 1 ? ` ×${n}` : ''}</span>`).join(' ')}</p>` : ''}
+        ${Object.keys(S.game.spelled || {}).length ? `<h3 style="margin-top:10px">맞춤법을 알려 준 낱말</h3><p>${Object.entries(S.game.spelled).map(([t, w]) => `<span class="chip">${esc(t)} → ${esc(w)}</span>`).join(' ')}</p>` : ''}
+        ${Object.keys(S.game.unknown || {}).length || Object.keys(S.game.spelled || {}).length ? '<button class="btn small" data-act="gameclear">목록 지우기</button>' : ''}
+      </div>
       <div class="card"><h3>진도 조정</h3>
         <p>지금 진도: <b>${esc(unitOf(S.pos.u).title)} ${S.pos.d}일차 · ${STEPS[S.pos.s].name}</b> <span class="muted">(코드 ${code})</span> · 받아쓰기 <b>${S.grade}급</b></p>
         <div class="form">
@@ -1702,6 +1964,8 @@ window.HANGUL = (() => {
         ${chk('classPunct', '우리 반 받아쓰기에서 문장부호 채점')}
         <label>불러주기 횟수${sel('listenMax', [[0, '무제한 (연습)'], [2, '2번만 (시험처럼)']], st.listenMax)}</label>
         <label>받아쓰기 읽기 속도${sel('dictRate', [[0.65, '아주 천천히'], [0.8, '천천히 (추천)'], [0.9, '보통']], st.dictRate)}</label>
+        ${chk('useCards', '맞힌 뒤 "이렇게 써요" 활용 대화 카드 보여주기 (KREQ-53)')}
+        ${chk('gameOn', '홈에 끝말잇기 놀이 버튼 보이기 (KREQ-52)')}
       </div></div>
       <div class="card"><h3>설정</h3><div class="form">
         <label>부르는 이름<input data-set="childName" value="${esc(st.childName)}"></label>
@@ -1793,6 +2057,7 @@ window.HANGUL = (() => {
       delrw: (i, btn) => { if (!btn.dataset.sure) { btn.dataset.sure = 1; btn.textContent = '한 번 더 누르면 삭제'; return; } S.rewards.splice(+i, 1); save(); parentScreen(); },
       spec: specScreen,
       rewardadmin: rewardAdminScreen,
+      gameclear: () => { S.game.unknown = {}; S.game.spelled = {}; save(); parentScreen(); },
       checkver: async () => {
         const info = document.getElementById('verInfo'); if (info) info.textContent = '· 확인 중…';
         try {
@@ -1825,7 +2090,8 @@ window.HANGUL = (() => {
   // 저장된 진도가 브라우저 정리로 지워지지 않게 요청
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* */ }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { hush(); stopRecording(); } });
-  window.YUNI = { get state() { return S; }, ko, dictate, hush, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, parseCode, contentWarnings, KEY, APP_VERSION, DAY_STAR_MAX, DAY_BONUS }; // 테스트용
+  window.YUNI = { get state() { return S; }, ko, dictate, hush, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, parseCode, contentWarnings, KEY, APP_VERSION, DAY_STAR_MAX, DAY_BONUS,
+    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, useLines, meanSay }; // 테스트용
   homeScreen();
   // 시작하고 잠시 뒤 새 버전이 있는지 조용히 확인
   setTimeout(() => { if (!/^https?:/.test(location.protocol) || window.__SPEC_INLINE || navigator.onLine === false) return;

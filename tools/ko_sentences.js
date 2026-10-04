@@ -55,6 +55,12 @@ addKo('오늘은 도전하는 날! 10문제 중 8개를 한 번에 맞히면 스
 Object.values(C.rules).forEach(r => addKo(r.hint));
 C.lines.praise.forEach(addKo); addKo(C.lines.retry);
 addKo('복습할 말이 아직 없어요! 바로 오늘의 규칙으로 가요');
+// ③-2 낱말 사전(dict, v0.5.0 KREQ-52·53): "낱말! 뜻"은 한 덩어리로 녹음(ko(meanSay)가 통째로 찾아요), 활용 대화는 말하는 사람 이름을 빼고 줄마다
+Object.entries(C.dict || {}).forEach(([w, d]) => {
+  if (d.mean) addKey(`${w}! ${d.mean}`);
+  String(d.use || '').split(' / ').forEach(l => { const m = l.match(/^([^:]+):\s*(.+)$/); addKo(m ? m[2] : l); });
+});
+addKo('끝말잇기 하자! 내가 먼저 할게.'); addKo('이제 네 차례!');
 // ④ 받아쓰기로 불러주는 낱말·문장
 C.units.forEach(u => (u.words || []).forEach(w => addDict(w.word)));
 C.grades.forEach(g => g.items.forEach(it => addDict(it.text)));

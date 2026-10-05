@@ -36,6 +36,7 @@ ko_norm = lambda t: re.sub(r'\s+', ' ', str(t)).strip()
 ko_parts = lambda t: [x.strip() for x in re.split(r'(?<=[.!?])\s+', str(t)) if x.strip()]
 ko_logs = []  # (기기, 문장)
 CLASS_TEXTS = {'로봇이 걸어요.', '현이가 개미를 찾았어요.'}  # 테스트에서 아빠가 넣은 우리 반 문장(미리 녹음 불가 → 기기 음성)
+BIG_TEXTS = set()  # 끝말잇기 인정 사전(words-ko.js) 낱말의 "낱말! 뜻" (녹음 없음 → 기기 음성, v0.5.1)
 
 results = []  # (항목, OK/FAIL, 설명)
 def check(name, cond, info=''):
@@ -324,6 +325,20 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-52/53 윤이 낱말마다 뜻·활용 대화 카드 ({use_ok}/4)', use_ok >= 3)
         check(f'[{dev}] KREQ-52 로보 낱말은 모두 사전에 있고 끝말이 이어짐', run_js(page, "() => { const c = YUNI.game.chain; const H = (a, b) => { const l = [...a].pop(); const d = HANGUL.dec(l); const alts = [l]; const iy = 'ㅣㅑㅕㅖㅛㅠㅒ'.includes(d.jung); if (d.cho === 'ㄹ') alts.push(HANGUL.comp(iy ? 'ㅇ' : 'ㄴ', d.jung, d.jong)); if (d.cho === 'ㄴ' && iy) alts.push(HANGUL.comp('ㅇ', d.jung, d.jong)); return alts.includes(b[0]); };"
           " return c.every(x => YUNI.GAME_WORDS.includes(x.w)) && c.slice(1).every((x, i) => H(c[i].w, x.w)); }"))
+        # 인정 사전(words-ko.js): dict에 없어도 명사 사전에 있으면 인정 (v0.5.1)
+        bw = run_js(page, "() => { const g = YUNI.game; const deep = (w, u, d) => d <= 0 || YUNI.gameCands(w, u.concat([w])).some(r => deep(r, u.concat([w]), d - 1));"
+          " const last = [...g.prev].pop(); return Object.keys(window.KOWORDS).find(w => w[0] === last && !YUNI.GAME_WORDS.includes(w) && w.length >= 2 && w.length <= 3 && !g.used.includes(w) && deep(w, g.used, 3)) || null; }")
+        if bw:
+            n0 = run_js(page, "() => YUNI.game.n")
+            type_text(page, bw); page.click('[data-act=submit]')
+            t0 = time.time(); card = ''
+            while time.time() - t0 < 5 and '📖' not in card:
+                card = run_js(page, "() => (document.getElementById('turn') || {}).innerText || ''"); page.wait_for_timeout(40)
+            gb = g_wait(n0 + 1); BIG_TEXTS.add(bw)
+            check(f'[{dev}] KREQ-52 인정 사전 낱말({bw})은 dict에 없어도 인정 + 📖 뜻 카드', gb['chain'][-2]['w'] == bw and '📖' in card and bw in card and run_js(page, "w => YUNI.bigMean(w)", bw) in card, card[:80])
+        else:
+            check(f'[{dev}] KREQ-52 인정 사전 낱말 (후보 없음)', False, run_js(page, "() => YUNI.game.prev"))
+        gk = run_js(page, "() => YUNI.game")
         # 모르겠어요 2번 → 낱말 보고 따라 쓰기 (이은 낱말로 세지만 별 계산엔 안 들어감)
         page.click('[data-act=idk]'); page.wait_for_timeout(300)
         h1 = run_js(page, "() => document.getElementById('hintcard').innerText")
@@ -533,7 +548,7 @@ with sync_playwright() as p:
 
     # --- KREQ-65 녹음 목록 적용 범위: 하루 흐름에서 실제로 읽은 한국어가 녹음 목록에 있는지 ---
     logged = sorted({ko_norm(t) for _, t in ko_logs if ko_norm(t)})
-    user = [t for t in logged if t in CLASS_TEXTS or ko_norm(t.replace('/', ' ')) in CLASS_TEXTS]
+    user = [t for t in logged if t in CLASS_TEXTS or ko_norm(t.replace('/', ' ')) in CLASS_TEXTS or any(t.startswith(b + '! ') for b in BIG_TEXTS)]
     target = [t for t in logged if t not in user]
     covered = [t for t in target if t in KO_IDX or all(x in KO_IDX for x in ko_parts(t))]
     missing = [t for t in target if t not in covered]
@@ -564,6 +579,7 @@ with sync_playwright() as p:
     check('KREQ-65 sw.js가 audio-ko/index.json 캐시 + 녹음 파일 백그라운드 받기, 업데이트 목록에도', "'audio-ko/index.json'" in sw and 'cacheAudio' in sw and "'audio-ko/index.json']" in src)
     check('KREQ-65 녹음 파일이 index.json과 맞음', all(os.path.exists(os.path.join(APP, 'audio-ko', f)) for f in KO_IDX.values()), str(len(KO_IDX)))
     check('KREQ-52/53 낱말 사전(dict)에 단원·급수 낱말의 뜻·활용 대화가 모두 있음 (콘텐츠 점검 경고 없음)', not cw_warn, str(cw_warn[:3]))
+    check('KREQ-52 인정 사전 words-ko.js: 명사 2만 개 이상, index.html·sw.js·업데이트 목록에', len(json.loads(re.search(r'window\.KOWORDS = (\{.*\});', open(f'{APP}/words-ko.js', encoding='utf-8').read(), re.S).group(1))) > 20000 and 'words-ko.js' in sw and 'words-ko.js' in open(f'{APP}/index.html', encoding='utf-8').read() and "'words-ko.js'" in src)
     check('KREQ-53 낱말 사전 녹음: "낱말! 뜻"과 활용 대화가 녹음 목록에', all(k in KO_IDX for k in ['나비! 꽃밭을 날아다니는 예쁜 날개 곤충이에요.', '노란 나비가 꽃에 앉았어!', '끝말잇기 하자!']))
     for rid in ['KREQ-01', 'KREQ-02', 'KREQ-04', 'KREQ-07', 'KREQ-08', 'KREQ-12', 'KREQ-16', 'KREQ-17', 'KREQ-18', 'KREQ-40', 'KREQ-41', 'KREQ-42', 'KREQ-43', 'KREQ-45', 'KREQ-47', 'KREQ-52', 'KREQ-53', 'KREQ-60', 'KREQ-61', 'KREQ-62', 'KREQ-63', 'KREQ-64', 'KREQ-65']:
         check(f'기획서.md에 {rid} 있음', rid in spec)

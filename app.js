@@ -274,7 +274,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.5.0';
+  const APP_VERSION = '0.5.1';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -1384,6 +1384,10 @@ window.HANGUL = (() => {
    * - 힌트: 모르겠어요 1번 = 그림과 첫 글자, 2번 = 낱말 보고 따라 쓰기(이은 낱말로 세지만 별 계산에는 안 들어가요)
    * - 별: 스스로 이은 낱말 5개마다 1개 (하루 최대 50개 안에서). 로보가 못 이으면 윤이가 이긴 거예요 */
   const GAME_WORDS = Object.keys(DICT).filter(w => DICT[w].game !== false && HG.syls(w).every(HG.isSyl));
+  // 인정 사전 (words-ko.js, v0.5.1): 한국어 명사 약 3만 개 + 짧은 뜻. 윤이가 쓴 낱말이 여기 있으면 끝말만 맞으면 인정해요. 로보는 뜻·그림·녹음이 있는 dict(GAME_WORDS)에서만 골라요
+  const KOW = window.KOWORDS || {};
+  const bigMean = w => (typeof KOW[w] === 'string' ? KOW[w] : '');
+  const inBig = w => Object.prototype.hasOwnProperty.call(KOW, w) || GAME_WORDS.includes(w);
   const GAME_STARTS = {}; GAME_WORDS.forEach(w => { (GAME_STARTS[w[0]] = GAME_STARTS[w[0]] || []).push(w); });
   const lastCh = w => HG.syls(w).slice(-1)[0];
   function headAlts(ch) { // 두음 법칙: 라→나, 리→이, 녀→여
@@ -1395,13 +1399,22 @@ window.HANGUL = (() => {
   const linksOk = (prev, w) => !prev || headAlts(lastCh(prev)).includes(w[0]);
   const gameCands = (prev, used) => headAlts(lastCh(prev)).flatMap(c => GAME_STARTS[c] || []).filter(w => !used.has(w));
   const nextCount = (w, used) => gameCands(w, new Set([...used, w])).length;
-  // w 뒤로 depth번 더 이어 갈 길이 있는지 (로보가 금방 막히는 낱말을 피하려고 몇 수 앞을 봐요)
+  // w 뒤로 depth번 더 이어 갈 길이 있는지 (쓴 낱말 빼고)
   function deep(w, used, depth) { if (depth <= 0) return true; const u = new Set([...used, w]); return gameCands(w, u).some(r => deep(r, u, depth - 1)); }
-  // 로보가 고르는 낱말: 윤이가 이어 갈 낱말이 2개 이상 남고 그 뒤로도 길이 있는 것, 짧은 것 먼저
+  // 낱말 뒤로 사전 안에서 얼마나 길게 이어 갈 수 있는지 (최대 CHAIN_CAP, 한 번 계산해 두고 써요). 로보가 금방 막히는 길을 피하려고 봐요
+  const CHAIN_CAP = 6; const chainMemo = {};
+  function chainDepth(w, path = new Set()) {
+    if (chainMemo[w] !== undefined) return chainMemo[w];
+    if (path.has(w) || path.size >= CHAIN_CAP) return CHAIN_CAP; // 돌고 도는 길은 충분히 긴 것으로
+    path.add(w); let best = 0;
+    for (const x of gameCands(w, new Set())) { if (x === w) continue; best = Math.max(best, 1 + chainDepth(x, path)); if (best >= CHAIN_CAP) break; }
+    path.delete(w); chainMemo[w] = Math.min(best, CHAIN_CAP); return chainMemo[w];
+  }
+  // 로보가 고르는 낱말: 윤이가 이어 갈 낱말이 2개 이상 남고 그 뒤로도 길이 긴 것, 짧은 것 먼저
   function robotPick(prev, used, r) {
     const cands = prev ? gameCands(prev, used) : GAME_WORDS.filter(w => HG.syls(w).length <= 3);
     if (!cands.length) return null;
-    const score = w => { const u = new Set([...used, w]); const nx = gameCands(w, u); const good = nx.filter(x => deep(x, u, 2)).length;
+    const score = w => { const u = new Set([...used, w]); const nx = gameCands(w, u); const good = nx.filter(x => chainDepth(x) >= 4 && deep(x, u, 2)).length;
       return (good >= 2 ? 0 : good === 1 ? 5 : nx.length ? 15 : 25) + Math.min(HG.syls(w).length, 4); };
     return shuffle(cands, r).sort((a, b) => score(a) - score(b))[0];
   }
@@ -1498,7 +1511,7 @@ window.HANGUL = (() => {
     S.game.words = (S.game.words || 0) + 1; save(); gameRefresh();
     G.cp.setText(''); G.cp.clearMarks(); G.redraw();
     ding(); flash('👍');
-    const d = dictOf(w) || {};
+    const d = dictOf(w) || { img: '📖', mean: bigMean(w) }; // 인정 사전 낱말은 📖와 짧은 뜻(녹음 없음 → 기기 음성)
     if (typed && typed !== w) { // 맞춤법 알려주기
       S.game.spelled[typed] = w; save();
       const el = document.getElementById('hintcard'); el.hidden = false;
@@ -1506,7 +1519,7 @@ window.HANGUL = (() => {
       await ko('조금 다르게 썼어. 바른 글자를 봐. 다음엔 맞게 써 봐요!'); if (my !== gameToken) return;
     }
     setTurn(`<div class="wcard yuni"><div class="wcard-head"><span class="who"><span>🧒</span><small>${esc(S.settings.childName || '윤이')}</small></span><span class="pic sm">${esc(d.img || '')}</span><b class="wword" data-act="playw" data-arg="${esc(w)}">${esc(w)}</b></div>${d.mean ? `<div class="wmean">${esc(d.mean)}</div>` : ''}</div>`);
-    await ko(meanSay(w) || w); if (my !== gameToken) return;
+    await ko(meanSay(w) || (d.mean ? `${w}! ${d.mean}` : w)); if (my !== gameToken) return;
     if (!(await showUse(w, my))) return; // 활용 대화 (KREQ-53)
     if (!hinted && G.solo % 5 === 0) {
       const n = addStars(1); G.stars += n; S.game.stars = (S.game.stars || 0) + n; save();
@@ -1522,15 +1535,15 @@ window.HANGUL = (() => {
     hush(); const my = ++gameToken;
     if (!HG.syls(text).every(HG.isSyl)) { soft(); setHint('한글 글자로 끝까지 써요 (자음+모음)'); return; }
     if (text.length < 2 && !DICT[text]) { soft(); setHint('두 글자 이상 낱말을 써요'); return; }
-    const inDict = GAME_WORDS.includes(text);
+    const inDict = inBig(text);
     if (inDict && G.used.has(text)) { soft(); setHint(`'${text}'는 이미 나왔어요. 다른 낱말을 써 봐요`); await ko('그 낱말은 이미 나왔어. 다른 낱말을 써 볼까?'); return; }
-    if (inDict && linksOk(G.prev, text)) { hideCards(); return gameAccept(text, text, G.hint >= 2); }
+    if (inDict && linksOk(G.prev, text)) { hideCards(); return gameAccept(text, text, G.hint >= 2); } // dict 또는 인정 사전에 있고 끝말이 이어지면 인정
     const near = nearWord(text, G.prev, G.used);
     if (near) { hideCards(); return gameAccept(near, text, G.hint >= 2); }
     // 틀렸을 때: 부드러운 소리, 주황 표시, 힌트 (땡·X 없음)
     G.att++; soft();
     cp.clearMarks();
-    if (inDict || DICT[text]) { // 사전에는 있는데 첫 글자가 안 이어져요
+    if (inDict) { // 사전에는 있는데 첫 글자가 안 이어져요
       if (cp.meta[0]) cp.meta[0].w = true; cp.endMiss = false; G.redraw();
       setHint(`'${lastCh(G.prev)}'로 시작하는 낱말이어야 해요`); await ko('첫 글자를 다시 봐. 앞 낱말의 끝 글자로 시작해야 해.');
     } else {
@@ -1745,7 +1758,7 @@ window.HANGUL = (() => {
   }
   async function applyUpdate() {
     toast('새 버전을 받는 중이에요…');
-    const files = ['./', 'index.html', 'app.js', 'content.js', 'style.css', 'sw.js', 'manifest.webmanifest', '기획서.md', 'audio-ko/index.json'];
+    const files = ['./', 'index.html', 'app.js', 'content.js', 'words-ko.js', 'style.css', 'sw.js', 'manifest.webmanifest', '기획서.md', 'audio-ko/index.json'];
     try { await Promise.all(files.map(u => fetch(encodeURI(u), { cache: 'reload' }).catch(() => {}))); } catch (e) { /* */ }
     try { if (navigator.serviceWorker) for (const reg of await navigator.serviceWorker.getRegistrations()) await reg.unregister(); } catch (e) { /* */ }
     try { if (window.caches) for (const k of await caches.keys()) await caches.delete(k); } catch (e) { /* */ }
@@ -1935,7 +1948,7 @@ window.HANGUL = (() => {
       </div>
       <div class="card"><h3>🔗 끝말잇기</h3>
         <div class="kv"><div>놀이 횟수<b>${S.game.plays || 0}번</b></div><div>최고 기록<b>${S.game.best || 0}개</b></div><div>이은 낱말<b>${S.game.words || 0}개</b></div><div>받은 별<b>${S.game.stars || 0}개</b></div></div>
-        <p class="muted">사전에 ${GAME_WORDS.length}개 낱말이 있어요. 스스로 5개를 이을 때마다 별 1개(하루 50개 안에서). 윤이가 쓴 낱말이 사전에 없으면 아래에 모여요 — 바른 낱말이면 <b>content.js</b>의 dict에 뜻·대화를 넣어 주세요.</p>
+        <p class="muted">로보가 내는 낱말(뜻·그림·녹음 있음) ${GAME_WORDS.length}개 + 윤이 낱말 인정 사전 ${Object.keys(KOW).length.toLocaleString()}개. 스스로 5개를 이을 때마다 별 1개(하루 50개 안에서). 윤이가 쓴 낱말이 두 사전 모두에 없으면 아래에 모여요 — 바른 낱말이면 <b>content.js</b>의 dict에 뜻·대화를 넣어 주세요.</p>
         ${Object.keys(S.game.unknown || {}).length ? `<h3 style="margin-top:10px">${esc(robotName())}가 몰랐던 낱말</h3><p>${Object.entries(S.game.unknown).sort((a, b) => b[1] - a[1]).map(([w, n]) => `<span class="chip">${esc(w)}${n > 1 ? ` ×${n}` : ''}</span>`).join(' ')}</p>` : ''}
         ${Object.keys(S.game.spelled || {}).length ? `<h3 style="margin-top:10px">맞춤법을 알려 준 낱말</h3><p>${Object.entries(S.game.spelled).map(([t, w]) => `<span class="chip">${esc(t)} → ${esc(w)}</span>`).join(' ')}</p>` : ''}
         ${Object.keys(S.game.unknown || {}).length || Object.keys(S.game.spelled || {}).length ? '<button class="btn small" data-act="gameclear">목록 지우기</button>' : ''}
@@ -2091,7 +2104,7 @@ window.HANGUL = (() => {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* */ }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { hush(); stopRecording(); } });
   window.YUNI = { get state() { return S; }, ko, dictate, hush, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, parseCode, contentWarnings, KEY, APP_VERSION, DAY_STAR_MAX, DAY_BONUS,
-    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, useLines, meanSay }; // 테스트용
+    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, inBig, bigMean, useLines, meanSay }; // 테스트용
   homeScreen();
   // 시작하고 잠시 뒤 새 버전이 있는지 조용히 확인
   setTimeout(() => { if (!/^https?:/.test(location.protocol) || window.__SPEC_INLINE || navigator.onLine === false) return;

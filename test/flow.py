@@ -198,8 +198,10 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-09 다음 날로 진도 이동', st['pos'] == {'u': 0, 'd': 2, 's': 0}, str(st['pos']))
         # v0.6.0 하루 분량: 인사 1 · 복습 4 · 규칙 8 · 받아쓰기 6 · 고쳐주기 2 = 21문제
         # 첫날은 아직 복습할 말이 없어 복습 단계가 안내 한 장(0문제) — 복습 4문제는 둘째 날에 확인
-        check(f'[{dev}] KREQ-04 하루 단계별 문항 수 (인사 1·규칙 8·받아쓰기 6·고쳐주기 2, 첫날 복습은 없음)', {k: v for k, v in r1['steps'].items() if k != 1} == {0: 1, 2: 8, 3: 6, 4: 2}, json.dumps(r1['steps']))
-        check(f'[{dev}] KREQ-04 은후 고쳐주기 2문제는 서로 다른 낱말', len(r1['fix_words']) == 2 and len(set(r1['fix_words'])) == 2, str(r1['fix_words']))
+        check(f'[{dev}] KREQ-04 하루 단계별 문항 수 (인사 1·규칙 12·받아쓰기 8·고쳐주기 3, 첫날 복습은 없음)', {k: v for k, v in r1['steps'].items() if k != 1} == {0: 1, 2: 12, 3: 8, 4: 3}, json.dumps(r1['steps']))
+        dw = run_js(page, "() => { const S = YUNI.state; const w1 = YUNI.dayWords(S.pos.u, 1).map(w => w.word), w2 = YUNI.dayWords(S.pos.u, 2).map(w => w.word); return {n1: w1.length, n2: w2.length, same: w1.filter(w => w2.includes(w)).length, diff: w2.filter(w => !w1.includes(w)).length}; }")
+        check(f'[{dev}] KREQ-04 오늘의 낱말 하루 6개, 다음 날은 새 낱말 + 전날 낱말 겹침 ({json.dumps(dw)})', dw['n1'] == 6 and dw['n2'] == 6 and dw['diff'] >= 2 and dw['same'] >= 1, json.dumps(dw))
+        check(f'[{dev}] KREQ-04 은후 고쳐주기 3문제는 서로 다른 낱말', len(r1['fix_words']) == 3 and len(set(r1['fix_words'])) == 3, str(r1['fix_words']))
         check(f'[{dev}] KREQ-49 글자 고르기 보기 4개 (헷갈리는 글자가 모자라면 3개)', r1['opts_n'] and all(3 <= k <= 4 for k in r1['opts_n']) and r1['opts_n'].count(4) >= len(r1['opts_n']) / 2, str(r1['opts_n']))
         check(f'[{dev}] KREQ-01 보기 4개 가로 넘침 없음', not r1.get('pick_overflow'), str(r1.get('pick_overflow')))
         check(f'[{dev}] 오류 없음 (콘솔)', not errors, str(errors[:3]))
@@ -227,8 +229,8 @@ with sync_playwright() as p:
         page.click('[data-act=quit]'); page.wait_for_selector('.go-btn')
         r2 = play_day(page, dev + '_d2', shots=False)
         day2 = run_js(page, "() => { const S = YUNI.state; return S.log[Object.keys(S.log).pop()] }")
-        check(f'[{dev}] 한 번에 다 맞힌 날 별 {day2["stars"]}개 (문제 21 + 보너스 3)', r2['end'] == 'reward' and 20 <= day2['stars'] <= 24, json.dumps(day2))
-        check(f'[{dev}] KREQ-04 둘째 날 단계별 문항 수 (복습 4·규칙 8·받아쓰기 6·고쳐주기 2 = 인사 포함 하루 21)', {k: v for k, v in r2['steps'].items() if k != 0} == {1: 4, 2: 8, 3: 6, 4: 2}, json.dumps(r2['steps']))
+        check(f'[{dev}] 한 번에 다 맞힌 날 별 {day2["stars"]}개 (문제 30 + 보너스 3)', r2['end'] == 'reward' and 30 <= day2['stars'] <= 33, json.dumps(day2))
+        check(f'[{dev}] KREQ-04 둘째 날 단계별 문항 수 (복습 6·규칙 12·받아쓰기 8·고쳐주기 3 = 인사 포함 하루 30)', {k: v for k, v in r2['steps'].items() if k != 0} == {1: 6, 2: 12, 3: 8, 4: 3}, json.dumps(r2['steps']))
 
         # --- KREQ-64 (공통 64번) 별: 몇 번 만에 맞혀도 1개, 정답 본 뒤 따라 써도 1개, 넘어가면 0개, 문제당 한 번만 ---
         run_js(page, "() => { YUNI.state.log = {}; YUNI.state.pos = {u: 0, d: 1, s: 0}; }")

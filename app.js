@@ -274,7 +274,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.6.0';
+  const APP_VERSION = '0.6.1';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -293,7 +293,7 @@ window.HANGUL = (() => {
   function defaults() {
     return {
       settings: { parentPin: '1234',
-        robotName: '로보', childName: '윤이', dailyLimit: 20, koVoice: '', koVoiceMode: 'rec', koRate: 0.9, dictRate: 0.8, listenMax: 0,
+        robotName: '로보', childName: '윤이', dailyLimit: 30, koVoice: '', koVoiceMode: 'rec', koRate: 0.9, dictRate: 0.8, listenMax: 0,
         spaceOn: true, spaceFrom: 7, punctOn: true, punctFrom: 2, classSpace: true, classPunct: true,
         goalStars: 50, goalText: '아빠와 약속한 선물',
         gameOn: true, useCards: true, // v0.5.0: 끝말잇기 놀이 보이기, 맞힌 뒤 "이렇게 써요" 카드
@@ -304,7 +304,12 @@ window.HANGUL = (() => {
       game: { plays: 0, best: 0, words: 0, stars: 0, unknown: {}, spelled: {} }, // v0.5.0 끝말잇기 기록 (KREQ-52)
     };
   }
-  function merge(o) { const d = defaults(); return Object.assign(d, o, { settings: Object.assign(d.settings, o.settings || {}), cls: Object.assign(d.cls, o.cls || {}), game: Object.assign(d.game, o.game || {}) }); }
+  function merge(o) {
+    const d = defaults(); const m = Object.assign(d, o, { settings: Object.assign(d.settings, o.settings || {}), cls: Object.assign(d.cls, o.cls || {}), game: Object.assign(d.game, o.game || {}) });
+    // v0.6.1: 하루 30문제가 되면서 기본 시간 20분 → 30분. 예전 기본값(20) 그대로인 기기만 한 번 올려요 (아빠가 바꾼 값은 그대로)
+    if (!m.settings.limitV2) { if (Number(m.settings.dailyLimit) === 20) m.settings.dailyLimit = 30; m.settings.limitV2 = true; }
+    return m;
+  }
   function load() {
     try { const raw = localStorage.getItem(KEY); if (raw) return merge(JSON.parse(raw)); } catch (e) { /* 저장소 사용 불가 */ }
     return defaults();
@@ -699,12 +704,14 @@ window.HANGUL = (() => {
   }
 
   /* ================= 수업 만들기 ================= */
-  // 하루 분량 (v0.6.0: 복습 3→4, 규칙 6→8, 도전 10→12(스티커 8→10개), 받아쓰기 5→6, 고쳐주기 1→2, 글자 고르기 보기 3→4개). 하루 총 21문제
-  const REVIEW_N = 4, RULE_N = 8, CHALLENGE_N = 12, CHALLENGE_OK = 10, DICT_N = 6, FIX_N = 2, PICK_WRONG = 3;
+  // 하루 분량 (v0.6.1: 복습 4→6, 규칙 8→12, 도전 12→15(스티커 10→12개), 받아쓰기 6→8, 고쳐주기 2→3). 하루 총 30문제 (v0.6.0은 21, 그전 16)
+  const REVIEW_N = 6, RULE_N = 12, CHALLENGE_N = 15, CHALLENGE_OK = 12, DICT_N = 8, FIX_N = 3, PICK_WRONG = 3;
+  // 오늘의 낱말 (v0.6.1): 하루 WORDS_N개. 날마다 step개씩 앞으로 가므로 새 낱말 + 전날 낱말이 겹쳐 두 번 익혀요 (그전엔 하루 3~4개, 겹침 없음)
+  const WORDS_N = 6;
   function dayWords(u, d) {
     const ws = unitOf(u).words.map(w => ({ ...w, u })); const n = ws.length; if (!n) return [];
-    const per = Math.max(3, Math.ceil(n / unitOf(u).days)); const start = ((d - 1) * per) % n;
-    return Array.from({ length: Math.min(per, n) }, (_, k) => ws[(start + k) % n]);
+    const step = Math.max(3, Math.ceil(n / unitOf(u).days)); const start = ((d - 1) * step) % n;
+    return Array.from({ length: Math.min(WORDS_N, n) }, (_, k) => ws[(start + k) % n]);
   }
   const srsWord = k => { const r = S.srs[k]; return r && r.w ? r.w : WORDS[k] ? { ...WORDS[k] } : { word: k }; };
   function dueReviews() {
@@ -798,7 +805,7 @@ window.HANGUL = (() => {
       for (let k = 0; k < n; k++) acts.push(makeProblem(pool[k % pool.length], modes[(k + off) % modes.length], key + k, { challenge }));
     } else if (id === 'dict') acts = clsActive() ? dictFromClass(DICT_N, key + today()) : dictFromGrade(key + S.grade);
     else {
-      // 은후 고쳐주기 FIX_N문제: 소리와 다르게 쓰는 낱말 먼저, 서로 다른 낱말로 (v0.6.0: 1 → 2)
+      // 은후 고쳐주기 FIX_N문제: 소리와 다르게 쓰는 낱말 먼저, 서로 다른 낱말로 (v0.6.0: 1 → 2, v0.6.1: 3)
       const cand = shuffle(L.dayWords.filter(w => winfo(w).differs), r); const rest = shuffle(L.dayWords.filter(w => !cand.includes(w)), r);
       const ws = cand.concat(rest).slice(0, FIX_N);
       acts = ws.map(w => {
@@ -2112,7 +2119,7 @@ window.HANGUL = (() => {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* */ }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { hush(); stopRecording(); } });
   window.YUNI = { get state() { return S; }, ko, dictate, hush, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, parseCode, contentWarnings, KEY, APP_VERSION, DAY_STAR_MAX, DAY_BONUS,
-    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, inBig, bigMean, useLines, meanSay }; // 테스트용
+    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, inBig, bigMean, useLines, meanSay, dayWords }; // 테스트용
   homeScreen();
   // 시작하고 잠시 뒤 새 버전이 있는지 조용히 확인
   setTimeout(() => { if (!/^https?:/.test(location.protocol) || window.__SPEC_INLINE || navigator.onLine === false) return;

@@ -50,7 +50,7 @@ for (const m of app.matchAll(/\{ id: '\w+', name: '([^']+)', icon/g)) addKo(`다
 addKo(`오늘 국어 끝! 정말 잘했어, ${callName}.`);
 for (let g = 10; g >= 1; g--) addKo(`받아쓰기 ${g}급 합격!`);
 addKo('스티커도 받았어!'); addKo('내일 또 만나!');
-addKo('오늘은 도전하는 날! 12문제 중 10개를 한 번에 맞히면 스티커를 받아요.'); // v0.6.0 (10문제 중 8개 → 12문제 중 10개)
+addKo('오늘은 도전하는 날! 15문제 중 12개를 한 번에 맞히면 스티커를 받아요.'); // v0.6.1 (10문제 중 8개 → 12문제 중 10개 → 15문제 중 12개)
 // ③ content.js 말: 힌트, 칭찬, 다시 듣기
 Object.values(C.rules).forEach(r => addKo(r.hint));
 C.lines.praise.forEach(addKo); addKo(C.lines.retry);

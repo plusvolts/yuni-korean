@@ -274,7 +274,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.5.1';
+  const APP_VERSION = '0.6.0';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -686,7 +686,7 @@ window.HANGUL = (() => {
       <h3 class="sub">받아쓰기 급수 배지</h3>
       <div class="badges">${gradesAll.map(g => `<div class="badge${S.badges[g] ? '' : ' locked'}"><span>🎖️</span><b>${g}급</b></div>`).join('')}</div>
       ${S.special.length ? `<h3 class="sub">특별 스티커</h3><div class="grid">${S.special.map(x => `<div class="tile"><span class="em">${esc(x.icon || '💯')}</span><b>${esc(x.text)}</b><small>${esc(x.date)}</small></div>`).join('')}</div>` : ''}
-      <p class="muted">단원 마지막 날 도전 문제를 8개 이상 맞히면 스티커를 받아요. 스티커를 누르면 낱말을 다시 들을 수 있어요.</p>
+      <p class="muted">단원 마지막 날 도전 문제를 ${CHALLENGE_OK}개 이상 맞히면 스티커를 받아요. 스티커를 누르면 낱말을 다시 들을 수 있어요.</p>
     </div>`, {
       home: homeScreen,
       st: async a => {
@@ -699,6 +699,8 @@ window.HANGUL = (() => {
   }
 
   /* ================= 수업 만들기 ================= */
+  // 하루 분량 (v0.6.0: 복습 3→4, 규칙 6→8, 도전 10→12(스티커 8→10개), 받아쓰기 5→6, 고쳐주기 1→2, 글자 고르기 보기 3→4개). 하루 총 21문제
+  const REVIEW_N = 4, RULE_N = 8, CHALLENGE_N = 12, CHALLENGE_OK = 10, DICT_N = 6, FIX_N = 2, PICK_WRONG = 3;
   function dayWords(u, d) {
     const ws = unitOf(u).words.map(w => ({ ...w, u })); const n = ws.length; if (!n) return [];
     const per = Math.max(3, Math.ceil(n / unitOf(u).days)); const start = ((d - 1) * per) % n;
@@ -707,7 +709,7 @@ window.HANGUL = (() => {
   const srsWord = k => { const r = S.srs[k]; return r && r.w ? r.w : WORDS[k] ? { ...WORDS[k] } : { word: k }; };
   function dueReviews() {
     const td = today();
-    return Object.entries(S.srs).filter(([, r]) => r.due && r.due <= td).sort((a, b) => a[1].due.localeCompare(b[1].due)).slice(0, 3).map(([k]) => srsWord(k));
+    return Object.entries(S.srs).filter(([, r]) => r.due && r.due <= td).sort((a, b) => a[1].due.localeCompare(b[1].due)).slice(0, REVIEW_N).map(([k]) => srsWord(k));
   }
   function reviewFill(u, d, need, have, r) {
     const seen = new Set(have.map(w => w.word)); const out = [];
@@ -723,7 +725,8 @@ window.HANGUL = (() => {
     const out = [];
     if (inf.differs) out.push(inf.sound);
     const rest = vs.filter(v => !out.includes(v)).slice(0, 6);
-    while (out.length < 2 && rest.length) out.push(rest.splice(Math.floor(r() * rest.length), 1)[0]);
+    // 헷갈리는 글자 PICK_WRONG개(v0.6.0: 2 → 3). 모자라면 있는 만큼만 (보기 3개로)
+    while (out.length < PICK_WRONG && rest.length) out.push(rest.splice(Math.floor(r() * rest.length), 1)[0]);
     return shuffle([w.word, ...out], r);
   }
   function makeProblem(w, mode, key, extra = {}) {
@@ -766,7 +769,7 @@ window.HANGUL = (() => {
       const items = G.items.map((it, idx) => ({ it, idx, g: G.g }));
       pool = shuffle(items.filter(x => !ok[x.idx]), r).concat(shuffle(items.filter(x => ok[x.idx]), r));
     }
-    return pool.slice(0, 5).map(x => {
+    return pool.slice(0, DICT_N).map(x => {
       const st = S.settings;
       return { type: 'dict', text: x.it.text, sound: x.it.sound, img: x.it.img, src: 'grade', g: x.g, idx: x.idx,
         space: !!st.spaceOn && x.g <= Number(st.spaceFrom), punct: !!st.punctOn && x.g <= Number(st.punctFrom) };
@@ -784,21 +787,25 @@ window.HANGUL = (() => {
     if (id === 'greet') acts = [makeProblem(L.dayWords[0], 1, key + 'g', { greet: true })];
     else if (id === 'review') {
       let items = dueReviews();
-      if (items.length < 3) items = items.concat(reviewFill(u, d, 3 - items.length, items, r));
+      if (items.length < REVIEW_N) items = items.concat(reviewFill(u, d, REVIEW_N - items.length, items, r));
       acts = items.length ? items.map((w, k) => makeProblem(w, winfo(w).differs ? 3 : 1, key + k, { review: true }))
         : [{ type: 'msg', text: '복습할 말이 아직 없어요! 바로 오늘의 규칙으로 가요 🚀' }];
     } else if (id === 'rule') {
-      const un = unitOf(u); const challenge = d === un.days; const n = challenge ? 10 : 6;
+      const un = unitOf(u); const challenge = d === un.days; const n = challenge ? CHALLENGE_N : RULE_N;
       const pool = challenge ? shuffle(un.words.map(w => ({ ...w, u })), r) : shuffle(L.dayWords, r).concat(shuffle(L.dayWords, r));
       const modes = un.modes || [1]; const off = Math.floor(r() * modes.length);
       acts = [{ type: 'card', u, challenge }];
       for (let k = 0; k < n; k++) acts.push(makeProblem(pool[k % pool.length], modes[(k + off) % modes.length], key + k, { challenge }));
-    } else if (id === 'dict') acts = clsActive() ? dictFromClass(5, key + today()) : dictFromGrade(key + S.grade);
+    } else if (id === 'dict') acts = clsActive() ? dictFromClass(DICT_N, key + today()) : dictFromGrade(key + S.grade);
     else {
-      const cand = L.dayWords.filter(w => winfo(w).differs); const w = pick(cand.length ? cand : L.dayWords, r);
-      let wrong = winfo(w).differs ? winfo(w).sound : pick(HG.variants(w.word).filter(v => HG.syls(v).length === HG.syls(w.word).length).slice(0, 4), r);
-      const W = HG.syls(w.word), X = HG.syls(wrong);
-      acts = [{ type: 'fix', w, wrong, bad: W.map((c, i) => c !== X[i] ? i : -1).filter(i => i >= 0) }];
+      // 은후 고쳐주기 FIX_N문제: 소리와 다르게 쓰는 낱말 먼저, 서로 다른 낱말로 (v0.6.0: 1 → 2)
+      const cand = shuffle(L.dayWords.filter(w => winfo(w).differs), r); const rest = shuffle(L.dayWords.filter(w => !cand.includes(w)), r);
+      const ws = cand.concat(rest).slice(0, FIX_N);
+      acts = ws.map(w => {
+        const wrong = winfo(w).differs ? winfo(w).sound : pick(HG.variants(w.word).filter(v => HG.syls(v).length === HG.syls(w.word).length).slice(0, 4), r);
+        const W = HG.syls(w.word), X = HG.syls(wrong);
+        return { type: 'fix', w, wrong, bad: W.map((c, i) => c !== X[i] ? i : -1).filter(i => i >= 0) };
+      });
     }
     L.cache[s] = acts; return acts;
   }
@@ -999,7 +1006,7 @@ window.HANGUL = (() => {
   function actCard(a) {
     const un = unitOf(a.u); const cd = un.card || {}; const ex = WORDS[cd.example] || { word: cd.example };
     const inf = ex.word ? winfo(ex) : null;
-    const extra = a.challenge ? '오늘은 도전하는 날! 10문제 중 8개를 한 번에 맞히면 스티커를 받아요.' : '';
+    const extra = a.challenge ? `오늘은 도전하는 날! ${CHALLENGE_N}문제 중 ${CHALLENGE_OK}개를 한 번에 맞히면 스티커를 받아요.` : '';
     render('lesson', lessonFrame(`<div class="prompt rule-card">
         <div class="pic">${esc(cd.img || un.icon)}</div>
         <div class="bubble">📘 ${esc(un.title)}</div>
@@ -1034,7 +1041,7 @@ window.HANGUL = (() => {
         <div class="hintcard" id="hintcard" hidden></div>
         ${USE_SLOT}
       </div>
-      <div class="choices text-choices">${a.opts.map(x => `<button class="choice text big" data-act="pick" data-arg="${esc(x)}">${esc(x)}</button>`).join('')}</div>`, { split: true }), {
+      <div class="choices text-choices${a.opts.length >= 4 ? ' four' : ''}">${a.opts.map(x => `<button class="choice text big" data-act="pick" data-arg="${esc(x)}">${esc(x)}</button>`).join('')}</div>`, { split: true }), {
       ...baseHandlers(),
       play: () => { hush(); dictate(w.word); }, slow: () => { hush(); dictate(w.word, true); },
       pick: (arg, btn) => {
@@ -1383,7 +1390,8 @@ window.HANGUL = (() => {
    * - 낱말마다 뜻·그림·활용 대화를 보여 주고 읽어요. 두음 법칙(라→나, 리→이, 녀→여)도 인정
    * - 힌트: 모르겠어요 1번 = 그림과 첫 글자, 2번 = 낱말 보고 따라 쓰기(이은 낱말로 세지만 별 계산에는 안 들어가요)
    * - 별: 스스로 이은 낱말 5개마다 1개 (하루 최대 50개 안에서). 로보가 못 이으면 윤이가 이긴 거예요 */
-  const GAME_WORDS = Object.keys(DICT).filter(w => DICT[w].game !== false && HG.syls(w).every(HG.isSyl));
+  // 로보가 내는 낱말·힌트·맞춤법 후보는 두 글자 이상만 (v0.6.0). 한 글자 낱말은 DICT에 남겨 두고("이렇게 써요" 카드용) 놀이에서만 빼요
+  const GAME_WORDS = Object.keys(DICT).filter(w => DICT[w].game !== false && HG.syls(w).every(HG.isSyl) && HG.syls(w).length >= 2);
   // 인정 사전 (words-ko.js, v0.5.1): 한국어 명사 약 3만 개 + 짧은 뜻. 윤이가 쓴 낱말이 여기 있으면 끝말만 맞으면 인정해요. 로보는 뜻·그림·녹음이 있는 dict(GAME_WORDS)에서만 골라요
   const KOW = window.KOWORDS || {};
   const bigMean = w => (typeof KOW[w] === 'string' ? KOW[w] : '');
@@ -1412,7 +1420,7 @@ window.HANGUL = (() => {
   }
   // 로보가 고르는 낱말: 윤이가 이어 갈 낱말이 2개 이상 남고 그 뒤로도 길이 긴 것, 짧은 것 먼저
   function robotPick(prev, used, r) {
-    const cands = prev ? gameCands(prev, used) : GAME_WORDS.filter(w => HG.syls(w).length <= 3);
+    const cands = prev ? gameCands(prev, used) : GAME_WORDS.filter(w => HG.syls(w).length >= 2 && HG.syls(w).length <= 3); // 첫 낱말은 2~3글자
     if (!cands.length) return null;
     const score = w => { const u = new Set([...used, w]); const nx = gameCands(w, u); const good = nx.filter(x => chainDepth(x) >= 4 && deep(x, u, 2)).length;
       return (good >= 2 ? 0 : good === 1 ? 5 : nx.length ? 15 : 25) + Math.min(HG.syls(w).length, 4); };
@@ -1534,7 +1542,7 @@ window.HANGUL = (() => {
     if (!text) { toast('먼저 써 봐요'); return; }
     hush(); const my = ++gameToken;
     if (!HG.syls(text).every(HG.isSyl)) { soft(); setHint('한글 글자로 끝까지 써요 (자음+모음)'); return; }
-    if (text.length < 2 && !DICT[text]) { soft(); setHint('두 글자 이상 낱말을 써요'); return; }
+    if (HG.syls(text).length < 2) { soft(); setHint('두 글자 이상 낱말을 써요'); return; } // 한 글자는 사전에 있어도 안 받아요 (v0.6.0)
     const inDict = inBig(text);
     if (inDict && G.used.has(text)) { soft(); setHint(`'${text}'는 이미 나왔어요. 다른 낱말을 써 봐요`); await ko('그 낱말은 이미 나왔어. 다른 낱말을 써 볼까?'); return; }
     if (inDict && linksOk(G.prev, text)) { hideCards(); return gameAccept(text, text, G.hint >= 2); } // dict 또는 인정 사전에 있고 끝말이 이어지면 인정
@@ -1610,8 +1618,8 @@ window.HANGUL = (() => {
     S.done[`${u}-${d}`] = today();
     let newSticker = false; let chMsg = '';
     if (d === un.days) {
-      if (L.ch.ok >= 8 && !S.stickers[u]) { S.stickers[u] = today(); newSticker = true; }
-      else if (!S.stickers[u]) chMsg = `도전 ${L.ch.ok}개 맞혔어요! 8개를 맞히면 스티커를 받아요. 단계 고르기에서 다시 도전할 수 있어요.`;
+      if (L.ch.ok >= CHALLENGE_OK && !S.stickers[u]) { S.stickers[u] = today(); newSticker = true; }
+      else if (!S.stickers[u]) chMsg = `도전 ${L.ch.ok}개 맞혔어요! ${CHALLENGE_OK}개를 맞히면 스티커를 받아요. 단계 고르기에서 다시 도전할 수 있어요.`;
     }
     // 다음 진도 (열린 단원 안에서 돌아요)
     let nu = u, nd = d + 1; if (nd > un.days) { nd = 1; const k = READY.indexOf(u); nu = READY[(k + 1) % READY.length]; }

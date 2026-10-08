@@ -1,5 +1,5 @@
 /* 오프라인 캐시. 파일을 고치면 VERSION을 올려주세요 (app.js의 APP_VERSION과 같이). */
-const VERSION = 'yuni-hangul-0.5.1';
+const VERSION = 'yuni-hangul-0.6.0';
 const FILES = ['./', 'index.html', 'style.css', 'content.js', 'words-ko.js', 'app.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', '기획서.md', 'audio-ko/index.json'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES.map(f => encodeURI(f)))).then(() => self.skipWaiting())); });
 // 한국어 녹음(audio-ko, 공통 65번): 설치 뒤 백그라운드로 모두 받아둬요 → 오프라인에서도 녹음 목소리

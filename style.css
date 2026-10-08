@@ -203,6 +203,9 @@ textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 13
 .rule-card .rule-text { max-width: 620px; font-size: var(--fs-md); font-weight: 700; line-height: 1.6; text-align: left; }
 .rule-card .challenge { margin: 10px 0 0; color: var(--miss); }
 .text-choices { grid-template-columns: 1fr; max-width: 480px; }
+/* 글자 고르기 보기 4개(v0.6.0): 두 줄×두 칸 */
+.text-choices.four { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 640px; }
+.text-choices.four .choice.big { font-size: clamp(38px, 5.5vw, 56px); min-height: 96px; }
 .choice.big { font-size: clamp(44px, 6.5vw, 64px); font-weight: 900; min-height: 104px; letter-spacing: 2px; }
 
 /* 모드 2 받침 끼우기 */
@@ -335,6 +338,7 @@ textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 13
   .stage.split.kb { grid-template-columns: 1fr 1.05fr; align-items: start; }
   .stage.split.kb .kb-wrap { position: sticky; top: 8px; }
   .stage.split .text-choices { grid-template-columns: 1fr; }
+  .stage.split .text-choices.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 /* 폰 세로: 위 문제·아래 자판 */
 @media (max-width: 600px) {
@@ -347,6 +351,8 @@ textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 13
   .caret { height: 36px; }
   .grid-paper { padding: 8px; }
   .choice.big { min-height: 84px; }
+  .text-choices.four { gap: 10px; } /* 폰 세로에서도 두 칸(2×2)이라 네 개가 한 화면에 들어와요 (낱말은 3글자 이하) */
+  .text-choices.four .choice.big { min-height: 76px; font-size: clamp(30px, 8.5vw, 44px); letter-spacing: 1px; }
   .fixbox { width: 76px; height: 84px; font-size: 48px; }
   .piece { width: 80px; height: 80px; font-size: 46px; }
   .tcard { min-width: 76px; height: 76px; font-size: 42px; }

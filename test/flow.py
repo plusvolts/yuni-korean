@@ -120,10 +120,15 @@ def play_day(page, tag, wrong_plan=None, shots=True):
     cur = wait_change(page, '')
     prev_missing, bad_found, red_found, input_found = [], [], False, False
     use_seen, use_missing = [], []  # KREQ-53 맞힌 뒤 "이렇게 써요" 카드
-    while cur and cur != 'reward' and n < 80:
+    steps, opts_n, fix_words, pick_overflow = {}, [], [], []  # 단계별 문항 수(카드·안내 제외), 글자 고르기 보기 수, 고쳐주기 낱말 (v0.6.0)
+    while cur and cur != 'reward' and n < 100:
         n += 1
         a = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.act))")
         L = run_js(page, "() => ({s: YUNI.lesson.s, i: YUNI.lesson.i})")
+        if a['type'] in ('pick', 'jong', 'build', 'dict', 'fix'): steps[L['s']] = steps.get(L['s'], 0) + 1
+        if a['type'] == 'pick': opts_n.append(len(a['opts']))
+        if a['type'] == 'fix': fix_words.append(a['w']['word'])
+        if a['type'] == 'pick' and len(a['opts']) >= 4 and not run_js(page, "() => document.scrollingElement.scrollWidth <= innerWidth + 1 && [...document.querySelectorAll('.choice')].every(b => b.scrollWidth <= b.clientWidth + 1)"): pick_overflow.append(a['w']['word'])
         if not (L['s'] == 0 and L['i'] == 0) and not run_js(page, "() => !!document.querySelector('[data-act=prev]:not([disabled])')"):
             prev_missing.append(cur)
         if run_js(page, "() => !!document.querySelector('.stage input, .stage textarea')"): input_found = True
@@ -146,7 +151,7 @@ def play_day(page, tag, wrong_plan=None, shots=True):
         if nxt is None: print('  멈춤:', cur, a['type']); break
         cur = nxt
     if shots: page.screenshot(path=f'{SHOT}/{tag}_99_reward.png')
-    return {'end': cur, 'types': seen_types, 'prev_missing': prev_missing, 'bad': bad_found, 'red': red_found, 'input': input_found, 'use_seen': use_seen, 'use_missing': use_missing}
+    return {'end': cur, 'types': seen_types, 'prev_missing': prev_missing, 'bad': bad_found, 'red': red_found, 'input': input_found, 'use_seen': use_seen, 'use_missing': use_missing, 'pick_overflow': pick_overflow, 'steps': steps, 'opts_n': opts_n, 'fix_words': fix_words}
 
 with sync_playwright() as p:
     br = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
@@ -191,6 +196,12 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-08 틀린 말이 어려운 말 상자에', len(st['srs']) > 0, str(st['srs'][:5]))
         check(f'[{dev}] KREQ-47 규칙별 정답률 쌓임', len(st['rs']) > 0, json.dumps(st['rs'], ensure_ascii=False))
         check(f'[{dev}] KREQ-09 다음 날로 진도 이동', st['pos'] == {'u': 0, 'd': 2, 's': 0}, str(st['pos']))
+        # v0.6.0 하루 분량: 인사 1 · 복습 4 · 규칙 8 · 받아쓰기 6 · 고쳐주기 2 = 21문제
+        # 첫날은 아직 복습할 말이 없어 복습 단계가 안내 한 장(0문제) — 복습 4문제는 둘째 날에 확인
+        check(f'[{dev}] KREQ-04 하루 단계별 문항 수 (인사 1·규칙 8·받아쓰기 6·고쳐주기 2, 첫날 복습은 없음)', {k: v for k, v in r1['steps'].items() if k != 1} == {0: 1, 2: 8, 3: 6, 4: 2}, json.dumps(r1['steps']))
+        check(f'[{dev}] KREQ-04 은후 고쳐주기 2문제는 서로 다른 낱말', len(r1['fix_words']) == 2 and len(set(r1['fix_words'])) == 2, str(r1['fix_words']))
+        check(f'[{dev}] KREQ-49 글자 고르기 보기 4개 (헷갈리는 글자가 모자라면 3개)', r1['opts_n'] and all(3 <= k <= 4 for k in r1['opts_n']) and r1['opts_n'].count(4) >= len(r1['opts_n']) / 2, str(r1['opts_n']))
+        check(f'[{dev}] KREQ-01 보기 4개 가로 넘침 없음', not r1.get('pick_overflow'), str(r1.get('pick_overflow')))
         check(f'[{dev}] 오류 없음 (콘솔)', not errors, str(errors[:3]))
 
         # 둘째 날: 한 번에 다 맞히기 → 별 확인 + 이전 버튼으로 같은 문제
@@ -216,7 +227,8 @@ with sync_playwright() as p:
         page.click('[data-act=quit]'); page.wait_for_selector('.go-btn')
         r2 = play_day(page, dev + '_d2', shots=False)
         day2 = run_js(page, "() => { const S = YUNI.state; return S.log[Object.keys(S.log).pop()] }")
-        check(f'[{dev}] 한 번에 다 맞힌 날 별 {day2["stars"]}개 (문제 16 + 보너스 3)', r2['end'] == 'reward' and 15 <= day2['stars'] <= 19, json.dumps(day2))
+        check(f'[{dev}] 한 번에 다 맞힌 날 별 {day2["stars"]}개 (문제 21 + 보너스 3)', r2['end'] == 'reward' and 20 <= day2['stars'] <= 24, json.dumps(day2))
+        check(f'[{dev}] KREQ-04 둘째 날 단계별 문항 수 (복습 4·규칙 8·받아쓰기 6·고쳐주기 2 = 인사 포함 하루 21)', {k: v for k, v in r2['steps'].items() if k != 0} == {1: 4, 2: 8, 3: 6, 4: 2}, json.dumps(r2['steps']))
 
         # --- KREQ-64 (공통 64번) 별: 몇 번 만에 맞혀도 1개, 정답 본 뒤 따라 써도 1개, 넘어가면 0개, 문제당 한 번만 ---
         run_js(page, "() => { YUNI.state.log = {}; YUNI.state.pos = {u: 0, d: 1, s: 0}; }")
@@ -226,7 +238,7 @@ with sync_playwright() as p:
         for attempt in range(2):
             page.click('[data-act=go]'); cur = wait_change(page, '')
             n = 0
-            while cur and cur != 'reward' and n < 60 and len(k64) < 4:
+            while cur and cur != 'reward' and n < 80 and len(k64) < 4:
                 n += 1
                 a = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.act))")
                 s0 = stars()
@@ -292,6 +304,12 @@ with sync_playwright() as p:
         h = run_js(page, "() => document.getElementById('hint').textContent")
         check(f'[{dev}] KREQ-52 첫 글자가 안 이어지면 "…로 시작하는 낱말이어야 해요"', '시작하는 낱말이어야' in h and run_js(page, "() => YUNI.game.n") == 0, h)
         g_clear()
+        # 한 글자 낱말(사전에 있어도) → "두 글자 이상 낱말을 써요" (v0.6.0)
+        one = run_js(page, "() => { const l = [...YUNI.game.prev].pop(); return Object.keys(window.KOWORDS).find(w => w.length === 1 && w === l) || l; }")
+        type_text(page, one); page.click('[data-act=submit]'); page.wait_for_timeout(300)
+        h = run_js(page, "() => document.getElementById('hint').textContent")
+        check(f'[{dev}] KREQ-52 한 글자({one})를 쓰면 "두 글자 이상 낱말을 써요" 안내 (인정 안 함)', '두 글자 이상 낱말을 써요' in h and run_js(page, "() => YUNI.game.n") == 0, h)
+        g_clear()
         # 모르는 낱말 → 땡 없이 다시 쓰기, 아빠 화면 목록에 기록
         type_text(page, '꾸뀨'); page.click('[data-act=submit]'); page.wait_for_timeout(400)
         h = run_js(page, "() => document.getElementById('hint').textContent"); b_, r_ = scan_bad(page, 'game')
@@ -351,6 +369,21 @@ with sync_playwright() as p:
         page.screenshot(path=f'{SHOT}/{dev}_52_game_end.png')
         check(f'[{dev}] KREQ-52 그만하기 → 결과(이은 낱말 수, 최고 기록 저장)', run_js(page, "() => document.body.innerText.includes('이은 낱말') && YUNI.state.game.best >= 6 && YUNI.state.game.plays >= 1"))
         page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        # v0.6.0: 로보 낱말(첫 낱말 2~3글자, 중간 낱말)·힌트 낱말은 두 글자 이상 — 여러 판 돌려서
+        firsts, hints, mids = [], [], []
+        for rnd in range(4):
+            page.click('[data-act=game]'); page.wait_for_selector('.chain'); g_ = g_wait(0)
+            firsts.append(g_['chain'][0]['w'])
+            w_ = g_pick()
+            if w_:
+                type_text(page, w_); page.click('[data-act=submit]'); g_ = g_wait(1)
+                mids.extend(x['w'] for x in g_['chain'] if x['who'] == 'robot')
+            page.click('[data-act=idk]'); page.wait_for_timeout(250)
+            hints.append(run_js(page, "() => (document.querySelector('#hintcard .answer') || {}).textContent || ''"))
+            page.click('[data-act=stop]'); page.wait_for_selector('.big-stars, .reward'); page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        check(f'[{dev}] KREQ-52 로보 첫 낱말은 2~3글자 ({"·".join(firsts)})', len(firsts) == 4 and all(2 <= len(w) <= 3 for w in firsts), str(firsts))
+        check(f'[{dev}] KREQ-52 로보 중간 낱말·힌트 낱말 모두 두 글자 이상 (중간 {len(mids)}개, 힌트 {len(hints)}개)', mids and all(len(w) >= 2 for w in mids) and all(len(h_) >= 2 for h_ in hints), f'{mids} / {hints}')
+        check(f'[{dev}] KREQ-52 로보 사전(GAME_WORDS)에 한 글자 낱말 없음, 한 글자는 dict에 남음', run_js(page, "() => YUNI.GAME_WORDS.every(w => [...w].length >= 2) && YUNI.GAME_WORDS.length >= 300"))
         if dev == 'tab':  # 아빠 화면 끝말잇기 카드·설정
             page.click('[data-act=parent]'); page.fill('#ans', '1234'); page.click('[data-act=ok]'); page.wait_for_selector('.ptabs')
             page.click('.ptab[data-arg="progress"]'); page.wait_for_timeout(100)

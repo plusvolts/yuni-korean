@@ -120,7 +120,7 @@ def play_day(page, tag, wrong_plan=None, shots=True):
     cur = wait_change(page, '')
     prev_missing, bad_found, red_found, input_found = [], [], False, False
     use_seen, use_missing = [], []  # KREQ-53 맞힌 뒤 "이렇게 써요" 카드
-    steps, opts_n, fix_words, pick_overflow = {}, [], [], []  # 단계별 문항 수(카드·안내 제외), 글자 고르기 보기 수, 고쳐주기 낱말 (v0.6.0)
+    steps, opts_n, fix_words, pick_overflow, day_words = {}, [], [], [], []  # 단계별 문항 수(카드·안내 제외), 글자 고르기 보기 수, 고쳐주기 낱말 (v0.6.0)
     while cur and cur != 'reward' and n < 100:
         n += 1
         a = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.act))")
@@ -128,6 +128,7 @@ def play_day(page, tag, wrong_plan=None, shots=True):
         if a['type'] in ('pick', 'jong', 'build', 'dict', 'fix'): steps[L['s']] = steps.get(L['s'], 0) + 1
         if a['type'] == 'pick': opts_n.append(len(a['opts']))
         if a['type'] == 'fix': fix_words.append(a['w']['word'])
+        if a['type'] in ('pick', 'jong', 'build', 'fix') or (a['type'] == 'dict' and a.get('src') == 'word'): day_words.append(a['w']['word'])  # v0.7.0 하루 안 낱말 겹침 점검 (받아쓰기 급수 문장은 뺌)
         if a['type'] == 'pick' and len(a['opts']) >= 4 and not run_js(page, "() => document.scrollingElement.scrollWidth <= innerWidth + 1 && [...document.querySelectorAll('.choice')].every(b => b.scrollWidth <= b.clientWidth + 1)"): pick_overflow.append(a['w']['word'])
         if not (L['s'] == 0 and L['i'] == 0) and not run_js(page, "() => !!document.querySelector('[data-act=prev]:not([disabled])')"):
             prev_missing.append(cur)
@@ -151,7 +152,7 @@ def play_day(page, tag, wrong_plan=None, shots=True):
         if nxt is None: print('  멈춤:', cur, a['type']); break
         cur = nxt
     if shots: page.screenshot(path=f'{SHOT}/{tag}_99_reward.png')
-    return {'end': cur, 'types': seen_types, 'prev_missing': prev_missing, 'bad': bad_found, 'red': red_found, 'input': input_found, 'use_seen': use_seen, 'use_missing': use_missing, 'pick_overflow': pick_overflow, 'steps': steps, 'opts_n': opts_n, 'fix_words': fix_words}
+    return {'end': cur, 'types': seen_types, 'prev_missing': prev_missing, 'bad': bad_found, 'red': red_found, 'input': input_found, 'use_seen': use_seen, 'use_missing': use_missing, 'pick_overflow': pick_overflow, 'steps': steps, 'opts_n': opts_n, 'fix_words': fix_words, 'words': day_words}
 
 with sync_playwright() as p:
     br = p.chromium.launch(args=['--autoplay-policy=no-user-gesture-required'])
@@ -199,8 +200,12 @@ with sync_playwright() as p:
         # v0.6.0 하루 분량: 인사 1 · 복습 4 · 규칙 8 · 받아쓰기 6 · 고쳐주기 2 = 21문제
         # 첫날은 아직 복습할 말이 없어 복습 단계가 안내 한 장(0문제) — 복습 4문제는 둘째 날에 확인
         check(f'[{dev}] KREQ-04 하루 단계별 문항 수 (인사 1·규칙 12·받아쓰기 8·고쳐주기 3, 첫날 복습은 없음)', {k: v for k, v in r1['steps'].items() if k != 1} == {0: 1, 2: 12, 3: 8, 4: 3}, json.dumps(r1['steps']))
-        dw = run_js(page, "() => { const S = YUNI.state; const w1 = YUNI.dayWords(S.pos.u, 1).map(w => w.word), w2 = YUNI.dayWords(S.pos.u, 2).map(w => w.word); return {n1: w1.length, n2: w2.length, same: w1.filter(w => w2.includes(w)).length, diff: w2.filter(w => !w1.includes(w)).length}; }")
-        check(f'[{dev}] KREQ-04 오늘의 낱말 하루 6개, 다음 날은 새 낱말 + 전날 낱말 겹침 ({json.dumps(dw)})', dw['n1'] == 6 and dw['n2'] == 6 and dw['diff'] >= 2 and dw['same'] >= 1, json.dumps(dw))
+        dw = run_js(page, "() => { const S = YUNI.state; const w1 = YUNI.dayWords(S.pos.u, 1).map(w => w.word), w2 = YUNI.dayWords(S.pos.u, 2).map(w => w.word); return {n1: w1.length, n2: w2.length, same: w1.filter(w => w2.includes(w)).length}; }")
+        check(f'[{dev}] KREQ-04 오늘의 낱말은 날마다 새 낱말 (하루 5개 이상, 다음 날과 안 겹침) ({json.dumps(dw)})', dw['n1'] >= 5 and dw['n2'] >= 5 and dw['same'] == 0, json.dumps(dw))
+        dups = [w for w in set(r1['words']) if r1['words'].count(w) > 1]
+        check(f'[{dev}] KREQ-04 하루 안에서 같은 낱말이 두 번 안 나옴 (낱말 문제 {len(r1["words"])}개)', len(r1['words']) >= 16 and not dups, str(dups))
+        plan_ok = run_js(page, "() => YUNI.state && (() => { const C = window.CONTENT; let bad = []; for (let u = 0; u < 7; u++) { const un = C.units[u]; if (un.words.length < 16) bad.push(un.id + ' 낱말 ' + un.words.length); for (let d = 1; d <= un.days; d++) { const p = YUNI.dayPlan(u, d); const ws = [p.greet.word, ...p.rule.map(w => w.word), ...p.fix.map(w => w.word)]; if (new Set(ws).size !== ws.length) bad.push(un.id + ' ' + d + '일차 겹침'); if (p.rule.length !== (d === un.days ? 15 : 12) || p.fix.length !== 3) bad.push(un.id + ' ' + d + '일차 수 ' + p.rule.length + '/' + p.fix.length); } } return bad; })()")
+        check(f'[{dev}] KREQ-04 단원 1~7 모든 일차에서 인사·규칙·고쳐주기 낱말이 서로 다름 (단원마다 낱말 16개 이상)', plan_ok == [], json.dumps(plan_ok, ensure_ascii=False))
         check(f'[{dev}] KREQ-04 은후 고쳐주기 3문제는 서로 다른 낱말', len(r1['fix_words']) == 3 and len(set(r1['fix_words'])) == 3, str(r1['fix_words']))
         check(f'[{dev}] KREQ-49 글자 고르기 보기 4개 (헷갈리는 글자가 모자라면 3개)', r1['opts_n'] and all(3 <= k <= 4 for k in r1['opts_n']) and r1['opts_n'].count(4) >= len(r1['opts_n']) / 2, str(r1['opts_n']))
         check(f'[{dev}] KREQ-01 보기 4개 가로 넘침 없음', not r1.get('pick_overflow'), str(r1.get('pick_overflow')))
@@ -230,6 +235,8 @@ with sync_playwright() as p:
         r2 = play_day(page, dev + '_d2', shots=False)
         day2 = run_js(page, "() => { const S = YUNI.state; return S.log[Object.keys(S.log).pop()] }")
         check(f'[{dev}] 한 번에 다 맞힌 날 별 {day2["stars"]}개 (문제 30 + 보너스 3)', r2['end'] == 'reward' and 30 <= day2['stars'] <= 33, json.dumps(day2))
+        dups2 = [w for w in set(r2['words']) if r2['words'].count(w) > 1]
+        check(f'[{dev}] KREQ-04 둘째 날도 복습 포함 같은 낱말이 두 번 안 나옴 (낱말 문제 {len(r2["words"])}개)', len(r2['words']) >= 21 and not dups2, str(dups2))
         check(f'[{dev}] KREQ-04 둘째 날 단계별 문항 수 (복습 6·규칙 12·받아쓰기 8·고쳐주기 3 = 인사 포함 하루 30)', {k: v for k, v in r2['steps'].items() if k != 0} == {1: 6, 2: 12, 3: 8, 4: 3}, json.dumps(r2['steps']))
 
         # --- KREQ-64 (공통 64번) 별: 몇 번 만에 맞혀도 1개, 정답 본 뒤 따라 써도 1개, 넘어가면 0개, 문제당 한 번만 ---

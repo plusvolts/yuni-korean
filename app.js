@@ -274,7 +274,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.6.1';
+  const APP_VERSION = '0.7.0';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -706,20 +706,37 @@ window.HANGUL = (() => {
   /* ================= 수업 만들기 ================= */
   // 하루 분량 (v0.6.1: 복습 4→6, 규칙 8→12, 도전 12→15(스티커 10→12개), 받아쓰기 6→8, 고쳐주기 2→3). 하루 총 30문제 (v0.6.0은 21, 그전 16)
   const REVIEW_N = 6, RULE_N = 12, CHALLENGE_N = 15, CHALLENGE_OK = 12, DICT_N = 8, FIX_N = 3, PICK_WRONG = 3;
-  // 오늘의 낱말 (v0.6.1): 하루 WORDS_N개. 날마다 step개씩 앞으로 가므로 새 낱말 + 전날 낱말이 겹쳐 두 번 익혀요 (그전엔 하루 3~4개, 겹침 없음)
-  const WORDS_N = 6;
+  // 오늘의 낱말 (v0.7.0): 단원 낱말을 일차 수로 나눠 날마다 새 낱말만 (단원 24개 ÷ 3~5일 = 하루 5~8개, 날끼리 겹치지 않음).
+  // v0.6.1에서는 6개씩 겹쳐 잡았지만 같은 낱말이 자꾸 나온다는 아빠 의견으로 바꿈
   function dayWords(u, d) {
     const ws = unitOf(u).words.map(w => ({ ...w, u })); const n = ws.length; if (!n) return [];
-    const step = Math.max(3, Math.ceil(n / unitOf(u).days)); const start = ((d - 1) * step) % n;
-    return Array.from({ length: Math.min(WORDS_N, n) }, (_, k) => ws[(start + k) % n]);
+    const per = Math.max(1, Math.ceil(n / unitOf(u).days)); const start = Math.min((d - 1) * per, n - 1);
+    return ws.slice(start, start + per);
+  }
+  // 하루 낱말 계획 (v0.7.0): 하루 안에서 같은 낱말이 두 번 나오지 않게 인사 1 · 규칙 12(도전 15) · 고쳐주기 3 낱말을 미리 나눠요.
+  // 규칙은 오늘의 낱말 먼저, 모자라면 이 단원의 다른 낱말(오늘 다음 낱말부터). 고쳐주기는 아직 안 쓴 단원 낱말 중 소리와 다르게 쓰는 말 먼저.
+  // 복습(dueReviews·reviewFill)도 오늘 쓰는 낱말은 빼요. 단원 낱말이 아주 적을 때만(16개 미만) 겹칠 수 있어요.
+  function dayPlan(u, d) {
+    const un = unitOf(u); const all = un.words.map(w => ({ ...w, u })); if (!all.length) return { greet: null, rule: [], fix: [], used: new Set() };
+    const r = rng(`${u}-${d}-plan`); const challenge = d === un.days; const todays = dayWords(u, d);
+    const greet = todays[0]; const used = new Set([greet.word]);
+    const take = (list, n) => { const out = []; for (const w of list) { if (out.length >= n) break; if (!used.has(w.word)) { used.add(w.word); out.push(w); } } return out; };
+    const per = Math.max(1, Math.ceil(all.length / un.days)); const start = Math.min((d - 1) * per, all.length - 1);
+    // 모자랄 때 보태는 낱말: 아직 안 배운 뒤쪽 낱말 먼저, 그다음 앞 일차 낱말 (앞 일차 낱말은 복습 몫으로 남겨 둬요)
+    const later = shuffle(all.slice(start + per), r), earlier = shuffle(all.slice(0, start), r);
+    const rule = challenge ? take(shuffle(all, r), CHALLENGE_N) : take(shuffle(todays, r).concat(later, earlier), RULE_N);
+    const left = later.concat(earlier).filter(w => !used.has(w.word));
+    let fix = take(left.filter(w => winfo(w).differs).concat(left.filter(w => !winfo(w).differs)), FIX_N);
+    if (fix.length < FIX_N) fix = fix.concat(shuffle(rule, r).slice(0, FIX_N - fix.length)); // 낱말이 모자랄 때만
+    return { greet, rule, fix, used };
   }
   const srsWord = k => { const r = S.srs[k]; return r && r.w ? r.w : WORDS[k] ? { ...WORDS[k] } : { word: k }; };
-  function dueReviews() {
+  function dueReviews(skip = new Set()) {
     const td = today();
-    return Object.entries(S.srs).filter(([, r]) => r.due && r.due <= td).sort((a, b) => a[1].due.localeCompare(b[1].due)).slice(0, REVIEW_N).map(([k]) => srsWord(k));
+    return Object.entries(S.srs).filter(([k, r]) => r.due && r.due <= td && !skip.has(k)).sort((a, b) => a[1].due.localeCompare(b[1].due)).slice(0, REVIEW_N).map(([k]) => srsWord(k));
   }
-  function reviewFill(u, d, need, have, r) {
-    const seen = new Set(have.map(w => w.word)); const out = [];
+  function reviewFill(u, d, need, have, r, skip = new Set()) {
+    const seen = new Set([...have.map(w => w.word), ...skip]); const out = [];
     const add = list => { for (const w of shuffle(list, r)) { if (out.length >= need) return; if (!seen.has(w.word)) { seen.add(w.word); out.push(w); } } };
     // 지난 단원 낱말 → 이 단원 앞 일차 낱말 → 전에 익힌 낱말
     const prevU = READY.filter(i => i < u); if (prevU.length) add(unitOf(prevU[prevU.length - 1]).words.map(w => ({ ...w, u: prevU[prevU.length - 1] })));
@@ -791,23 +808,22 @@ window.HANGUL = (() => {
     if (L.cache[s]) return L.cache[s];
     const { u, d } = L; const id = STEPS[s].id; const key = `${u}-${d}-${s}`; const r = rng(key);
     let acts;
-    if (id === 'greet') acts = [makeProblem(L.dayWords[0], 1, key + 'g', { greet: true })];
+    if (id === 'greet') acts = [makeProblem(L.plan.greet, 1, key + 'g', { greet: true })];
     else if (id === 'review') {
-      let items = dueReviews();
-      if (items.length < REVIEW_N) items = items.concat(reviewFill(u, d, REVIEW_N - items.length, items, r));
+      let items = dueReviews(L.plan.used); // 오늘 쓰는 낱말은 복습에서 빼요 (v0.7.0)
+      if (items.length < REVIEW_N) items = items.concat(reviewFill(u, d, REVIEW_N - items.length, items, r, L.plan.used));
       acts = items.length ? items.map((w, k) => makeProblem(w, winfo(w).differs ? 3 : 1, key + k, { review: true }))
         : [{ type: 'msg', text: '복습할 말이 아직 없어요! 바로 오늘의 규칙으로 가요 🚀' }];
     } else if (id === 'rule') {
-      const un = unitOf(u); const challenge = d === un.days; const n = challenge ? CHALLENGE_N : RULE_N;
-      const pool = challenge ? shuffle(un.words.map(w => ({ ...w, u })), r) : shuffle(L.dayWords, r).concat(shuffle(L.dayWords, r));
+      const un = unitOf(u); const challenge = d === un.days;
+      const pool = L.plan.rule; // v0.7.0: 하루 계획에서 고른 서로 다른 낱말 (RULE_N·CHALLENGE_N개)
       const modes = un.modes || [1]; const off = Math.floor(r() * modes.length);
       acts = [{ type: 'card', u, challenge }];
-      for (let k = 0; k < n; k++) acts.push(makeProblem(pool[k % pool.length], modes[(k + off) % modes.length], key + k, { challenge }));
+      pool.forEach((w, k) => acts.push(makeProblem(w, modes[(k + off) % modes.length], key + k, { challenge })));
     } else if (id === 'dict') acts = clsActive() ? dictFromClass(DICT_N, key + today()) : dictFromGrade(key + S.grade);
     else {
-      // 은후 고쳐주기 FIX_N문제: 소리와 다르게 쓰는 낱말 먼저, 서로 다른 낱말로 (v0.6.0: 1 → 2, v0.6.1: 3)
-      const cand = shuffle(L.dayWords.filter(w => winfo(w).differs), r); const rest = shuffle(L.dayWords.filter(w => !cand.includes(w)), r);
-      const ws = cand.concat(rest).slice(0, FIX_N);
+      // 은후 고쳐주기 FIX_N문제: 하루 계획에서 고른 낱말 (오늘 다른 단계에 안 나온 낱말, 소리와 다르게 쓰는 말 먼저) (v0.6.0: 1 → 2, v0.6.1: 3, v0.7.0: 안 겹치게)
+      const ws = L.plan.fix;
       acts = ws.map(w => {
         const wrong = winfo(w).differs ? winfo(w).sound : pick(HG.variants(w.word).filter(v => HG.syls(v).length === HG.syls(w.word).length).slice(0, 4), r);
         const W = HG.syls(w.word), X = HG.syls(wrong);
@@ -825,7 +841,7 @@ window.HANGUL = (() => {
     if (!READY.includes(u)) u = READY[0];
     d = Math.max(1, Math.min(daysOf(u), d || 1)); s = Math.max(0, Math.min(STEPS.length - 1, s || 0));
     S.pos = { u, d, s }; if (!S.days.includes(today())) S.days.push(today()); save();
-    L = newL(u, d, s); L.dayWords = dayWords(u, d);
+    L = newL(u, d, s); L.dayWords = dayWords(u, d); L.plan = dayPlan(u, d);
     L.acts = buildStep(s);
     showAct();
   }
@@ -833,7 +849,7 @@ window.HANGUL = (() => {
     if (!clsItems().length) return toast('아빠 화면에서 우리 반 받아쓰기 문장을 먼저 넣어주세요');
     if (lockReason()) return lockedScreen();
     if (!S.days.includes(today())) S.days.push(today()); save();
-    L = newL(S.pos.u, S.pos.d, 3); L.special = 'class'; L.dayWords = dayWords(S.pos.u, S.pos.d);
+    L = newL(S.pos.u, S.pos.d, 3); L.special = 'class'; L.dayWords = dayWords(S.pos.u, S.pos.d); L.plan = dayPlan(S.pos.u, S.pos.d);
     L.acts = dictFromClass(clsItems().length, 'cls' + today() + Math.random());
     showAct();
   }
@@ -2119,7 +2135,7 @@ window.HANGUL = (() => {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* */ }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { hush(); stopRecording(); } });
   window.YUNI = { get state() { return S; }, ko, dictate, hush, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, parseCode, contentWarnings, KEY, APP_VERSION, DAY_STAR_MAX, DAY_BONUS,
-    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, inBig, bigMean, useLines, meanSay, dayWords }; // 테스트용
+    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, inBig, bigMean, useLines, meanSay, dayWords, dayPlan }; // 테스트용
   homeScreen();
   // 시작하고 잠시 뒤 새 버전이 있는지 조용히 확인
   setTimeout(() => { if (!/^https?:/.test(location.protocol) || window.__SPEC_INLINE || navigator.onLine === false) return;

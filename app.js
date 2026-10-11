@@ -274,7 +274,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.7.0';
+  const APP_VERSION = '0.7.1';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -294,13 +294,14 @@ window.HANGUL = (() => {
     return {
       settings: { parentPin: '1234',
         robotName: '로보', childName: '윤이', dailyLimit: 30, koVoice: '', koVoiceMode: 'rec', koRate: 0.9, dictRate: 0.8, listenMax: 0,
-        spaceOn: true, spaceFrom: 7, punctOn: true, punctFrom: 2, classSpace: true, classPunct: true,
+        spaceOn: true, spaceFrom: 1, punctOn: true, punctFrom: 1, classSpace: true, classPunct: true, // v0.7.1: 학교 급수표(1급~5급)는 1급부터 띄어쓰기·문장부호 그대로
         goalStars: 50, goalText: '아빠와 약속한 선물',
         gameOn: true, useCards: true, // v0.5.0: 끝말잇기 놀이 보이기, 맞힌 뒤 "이렇게 써요" 카드
       },
       pos: { u: 0, d: 1, s: 0 }, done: {}, stars: 0, goalBase: 0,
       srs: {}, days: [], log: {}, stickers: {}, override: '', rewards: [],
-      grade: 10, gradeOk: {}, badges: {}, ruleStats: {}, cls: { title: '', date: '', items: [] }, special: [], dictCount: 0,
+      // v0.7.1: gradeV2 = 급수가 학교 급수표 1급부터 차례로(오름차순). 그전엔 10급부터 내려감
+      grade: 1, gradeOk: {}, badges: {}, ruleStats: {}, gradeV2: true, cls: { title: '', date: '', items: [] }, special: [], dictCount: 0,
       game: { plays: 0, best: 0, words: 0, stars: 0, unknown: {}, spelled: {} }, // v0.5.0 끝말잇기 기록 (KREQ-52)
     };
   }
@@ -308,6 +309,8 @@ window.HANGUL = (() => {
     const d = defaults(); const m = Object.assign(d, o, { settings: Object.assign(d.settings, o.settings || {}), cls: Object.assign(d.cls, o.cls || {}), game: Object.assign(d.game, o.game || {}) });
     // v0.6.1: 하루 30문제가 되면서 기본 시간 20분 → 30분. 예전 기본값(20) 그대로인 기기만 한 번 올려요 (아빠가 바꾼 값은 그대로)
     if (!m.settings.limitV2) { if (Number(m.settings.dailyLimit) === 20) m.settings.dailyLimit = 30; m.settings.limitV2 = true; }
+    // v0.7.1: 받아쓰기 급수를 학교 급수표(1급~5급, 오름차순)로 바꿈 → 예전(10급부터) 기록이 있는 기기는 급수 진도·합격 기록만 1급부터 다시 (별·스티커·낱말 기록은 그대로)
+    if (o && o.grade !== undefined && !o.gradeV2) { m.grade = 1; m.gradeOk = {}; m.badges = {}; m.settings.spaceFrom = 1; m.settings.punctFrom = 1; m.gradeV2 = true; }
     return m;
   }
   function load() {
@@ -682,7 +685,7 @@ window.HANGUL = (() => {
 
   /* ================= 스티커북 ================= */
   function stickerScreen() {
-    const gradesAll = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+    const gradesAll = C.grades.map(x => x.g); // v0.7.1: 학교 급수표 1~5급
     render('stickers', `<div class="screen">
       <div class="topbar"><button class="icon-btn" data-act="home" aria-label="처음으로">🏠</button><h2 class="title">📒 스티커북</h2></div>
       <h3 class="sub">단원 스티커</h3>
@@ -791,18 +794,26 @@ window.HANGUL = (() => {
     } else {
       const ok = S.gradeOk[G.g] || {};
       const items = G.items.map((it, idx) => ({ it, idx, g: G.g }));
-      pool = shuffle(items.filter(x => !ok[x.idx]), r).concat(shuffle(items.filter(x => ok[x.idx]), r));
+      // v0.7.1: 반은 아직 못 맞힌 문장 먼저, 반은 나머지에서 랜덤
+      pool = halfWrongHalfRandom(shuffle(items.filter(x => !ok[x.idx]), r).concat(shuffle(items.filter(x => ok[x.idx]), r)), DICT_N, r);
     }
     return pool.slice(0, DICT_N).map(x => {
       const st = S.settings;
       return { type: 'dict', text: x.it.text, sound: x.it.sound, img: x.it.img, src: 'grade', g: x.g, idx: x.idx,
-        space: !!st.spaceOn && x.g <= Number(st.spaceFrom), punct: !!st.punctOn && x.g <= Number(st.punctFrom) };
+        space: !!st.spaceOn && x.g >= Number(st.spaceFrom), punct: !!st.punctOn && x.g >= Number(st.punctFrom) }; // v0.7.1: 급수가 오름차순이라 "N급부터" = g >= N
     });
+  }
+  // 받아쓰기 문제 고르기 (v0.7.1, 아빠 요청): n개 중 반(올림)은 "틀린 문장 먼저" 순서(order)에서, 나머지 반은 남은 문장에서 랜덤.
+  // 그전(v0.1~v0.7.0)에는 전부 틀린 문장 먼저였어요. order가 n개보다 짧으면 있는 만큼만.
+  function halfWrongHalfRandom(order, n, r) {
+    const first = order.slice(0, Math.min(order.length, Math.ceil(n / 2)));
+    const rest = shuffle(order.slice(first.length), r).slice(0, n - first.length);
+    return shuffle(first.concat(rest), r);
   }
   function dictFromClass(n, key) {
     const r = rng(key); const items = clsItems().map((it, idx) => ({ it, idx }));
     const order = shuffle(items, r).sort((a, b) => ((a.it.ok || 0) > 0) - ((b.it.ok || 0) > 0) || (a.it.ok || 0) - (b.it.ok || 0));
-    return order.slice(0, n).map(x => ({ type: 'dict', text: normText(x.it.text), src: 'class', idx: x.idx, space: !!S.settings.classSpace, punct: !!S.settings.classPunct }));
+    return halfWrongHalfRandom(order, n, r).map(x => ({ type: 'dict', text: normText(x.it.text), src: 'class', idx: x.idx, space: !!S.settings.classSpace, punct: !!S.settings.classPunct }));
   }
   function buildStep(s) {
     if (L.cache[s]) return L.cache[s];
@@ -875,7 +886,7 @@ window.HANGUL = (() => {
     if (!G || S.badges[g]) return;
     if (gradeOkCount(g) >= 8) {
       S.badges[g] = today(); L.promoted = g;
-      if (gradeData(g - 1)) S.grade = g - 1;
+      if (gradeData(g + 1)) S.grade = g + 1; // v0.7.1: 다음 급은 +1
       save();
     }
   }
@@ -1654,7 +1665,7 @@ window.HANGUL = (() => {
       <div class="bubble">오늘 국어 끝! 정말 잘했어, ${esc(callName())}!<small>내일 또 만나요 👋</small></div>
       <div class="big-stars">⭐ +${L.earned}</div>
       ${bonus ? `<div class="muted" style="font-weight:800;margin-top:-10px">끝까지 한 보너스 ⭐${bonus} 포함</div>` : ''}
-      ${pg ? `<div class="sticker-new">🎖️</div><div class="bubble">받아쓰기 ${pg}급 합격!${gradeData(pg - 1) ? `<small>이제 ${pg - 1}급에 도전해요</small>` : '<small>다음 급은 곧 열려요</small>'}</div>` : ''}
+      ${pg ? `<div class="sticker-new">🎖️</div><div class="bubble">받아쓰기 ${pg}급 합격!${gradeData(pg + 1) ? `<small>이제 ${pg + 1}급에 도전해요</small>` : '<small>다음 급은 곧 열려요</small>'}</div>` : ''}
       ${newSticker ? `<div class="sticker-new">${un.sticker}</div><div class="bubble">${esc(un.title)} 스티커를 받았어요!</div>` : ''}
       ${chMsg ? `<div class="card mission">🏆 ${esc(chMsg)}</div>` : ''}
       ${un.mission && d === un.days ? `<div class="card mission">🏠 집에서 하는 글자 미션: ${esc(un.mission)}</div>` : ''}
@@ -1880,7 +1891,7 @@ window.HANGUL = (() => {
       const p = HG.pron(w.word).text; if (w.sound && w.sound !== p) note.push(`"${w.word}": 적힌 소리 [${w.sound}], 발음 규칙 계산 [${p}] (사이시옷 소리 등은 적힌 소리를 써요)`);
     }));
     // 낱말 사전(dict): 단원·급수 낱말이 모두 있어야 "이렇게 써요" 카드가 나와요 (KREQ-53). 끝말잇기에서 막히는 낱말은 참고로
-    const need = new Set(); U.forEach(un => (un.words || []).forEach(w => need.add(w.word))); C.grades.forEach(g => g.items.forEach(it => { if (!/\s/.test(normText(it.text))) need.add(normText(it.text)); }));
+    const need = new Set(); U.forEach(un => (un.words || []).forEach(w => need.add(w.word))); C.grades.forEach(g => g.items.forEach(it => { const t = normText(it.text); if (!/[\s.!?,]/.test(t)) need.add(t); })); // 급수표 낱말(띄어쓰기·문장부호 없는 것)만 (v0.7.1)
     need.forEach(w => { const d = DICT[w]; if (!d || !d.mean || !d.use) warn.push(`낱말 사전(dict)에 "${w}"의 뜻·활용 대화가 없어요 (content.js dict에 추가)`); });
     const dead = GAME_WORDS.filter(w => !gameCands(w, new Set([w])).length);
     if (dead.length) note.push(`끝말잇기: 뒤를 이을 낱말이 없는 낱말 ${dead.length}개 (${dead.slice(0, 12).join(', ')}${dead.length > 12 ? ' …' : ''}) — 로보는 이 낱말을 피하고, 윤이가 쓰면 윤이가 이겨요`);
@@ -1933,7 +1944,7 @@ window.HANGUL = (() => {
     const min = Math.round(todayLog().sec / 60);
     const st = S.settings; const code = `${S.pos.u + 1}-${S.pos.d}-${S.pos.s + 1}`;
     const cw = contentWarnings();
-    const gOpts = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+    const gOpts = C.grades.map(x => x.g);
     const sel = (key, list, cur) => `<select data-set="${key}" data-num="1">${list.map(([v, n]) => `<option value="${v}"${Number(cur) === Number(v) ? ' selected' : ''}>${n}</option>`).join('')}</select>`;
     const chk = (key, label) => `<label class="chk"><input type="checkbox" data-set="${key}"${st[key] ? ' checked' : ''}>${label}</label>`;
     render('parent', `<div class="screen"><div class="parent">
@@ -2087,13 +2098,13 @@ window.HANGUL = (() => {
         if (document.getElementById('adjMark').checked) {
           S.done = {}; S.stickers = {}; S.badges = {};
           READY.forEach(ui => { for (let di = 1; di <= daysOf(ui); di++) if (ui < u || (ui === u && di < d)) S.done[`${ui}-${di}`] = today(); if (ui < u) S.stickers[ui] = today(); });
-          C.grades.forEach(x => { if (x.g > g) S.badges[x.g] = today(); });
+          C.grades.forEach(x => { if (x.g < g) S.badges[x.g] = today(); }); // v0.7.1: 오름차순
         }
         S.pos = { u, d, s: sIdx }; S.grade = g; save(); toast(`진도를 ${U[u].title} ${d}일차 · ${STEPS[sIdx].name}, 받아쓰기 ${g}급으로 바꿨어요`); parentScreen();
       },
       resetprog: (x, btn) => {
         if (!btn.dataset.sure) { btn.dataset.sure = 1; btn.textContent = '정말 진도 초기화? 한 번 더 누르기'; return; }
-        S.pos = { u: 0, d: 1, s: 0 }; S.done = {}; S.stickers = {}; S.srs = {}; S.grade = 10; S.gradeOk = {}; S.badges = {}; S.ruleStats = {}; S.dictCount = 0;
+        S.pos = { u: 0, d: 1, s: 0 }; S.done = {}; S.stickers = {}; S.srs = {}; S.grade = 1; S.gradeOk = {}; S.badges = {}; S.ruleStats = {}; S.dictCount = 0;
         save(); toast('진도를 처음으로 돌렸어요'); parentScreen();
       },
       star: a => { S.stars = Math.max(0, S.stars + Number(a)); S.goalBase = Math.min(S.goalBase, S.stars); save(); parentScreen(); },
@@ -2135,7 +2146,7 @@ window.HANGUL = (() => {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* */ }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { hush(); stopRecording(); } });
   window.YUNI = { get state() { return S; }, ko, dictate, hush, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, parseCode, contentWarnings, KEY, APP_VERSION, DAY_STAR_MAX, DAY_BONUS,
-    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, inBig, bigMean, useLines, meanSay, dayWords, dayPlan }; // 테스트용
+    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, inBig, bigMean, useLines, meanSay, dayWords, dayPlan, halfWrongHalfRandom }; // 테스트용
   homeScreen();
   // 시작하고 잠시 뒤 새 버전이 있는지 조용히 확인
   setTimeout(() => { if (!/^https?:/.test(location.protocol) || window.__SPEC_INLINE || navigator.onLine === false) return;

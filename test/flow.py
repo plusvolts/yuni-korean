@@ -140,8 +140,8 @@ def play_day(page, tag, wrong_plan=None, shots=True):
         answer(page, a, wf)
         if wf:
             b, r = scan_bad(page, cur); bad_found += b; red_found |= r
-        if a['type'] in ('pick', 'jong', 'build', 'dict', 'fix'):
-            word = a['w']['word'] if a.get('w') else a.get('text', '')
+        word = a['w']['word'] if a.get('w') else a.get('text', '')
+        if a['type'] in ('pick', 'jong', 'build', 'dict', 'fix') and not (a['type'] == 'dict' and re.search(r'[ .!?,]', word)):  # 급수표·우리 반 문장(띄어쓰기·문장부호)은 카드 없음 (KREQ-53)
             t0 = time.time(); seen = None
             while time.time() - t0 < 4 and act_id(page) == cur:
                 seen = run_js(page, "() => { const u = document.getElementById('usecard'); return u && !u.hidden && u.innerText.includes('이렇게 써요') ? u.innerText : null; }")
@@ -206,6 +206,10 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-04 하루 안에서 같은 낱말이 두 번 안 나옴 (낱말 문제 {len(r1["words"])}개)', len(r1['words']) >= 16 and not dups, str(dups))
         plan_ok = run_js(page, "() => YUNI.state && (() => { const C = window.CONTENT; let bad = []; for (let u = 0; u < 7; u++) { const un = C.units[u]; if (un.words.length < 16) bad.push(un.id + ' 낱말 ' + un.words.length); for (let d = 1; d <= un.days; d++) { const p = YUNI.dayPlan(u, d); const ws = [p.greet.word, ...p.rule.map(w => w.word), ...p.fix.map(w => w.word)]; if (new Set(ws).size !== ws.length) bad.push(un.id + ' ' + d + '일차 겹침'); if (p.rule.length !== (d === un.days ? 15 : 12) || p.fix.length !== 3) bad.push(un.id + ' ' + d + '일차 수 ' + p.rule.length + '/' + p.fix.length); } } return bad; })()")
         check(f'[{dev}] KREQ-04 단원 1~7 모든 일차에서 인사·규칙·고쳐주기 낱말이 서로 다름 (단원마다 낱말 16개 이상)', plan_ok == [], json.dumps(plan_ok, ensure_ascii=False))
+        hw = run_js(page, "() => { const items = Array.from({length: 10}, (_, i) => ({ it: { ok: i < 4 ? 1 : 0 }, idx: i })); const r = () => Math.random(); const order = items.slice().sort((a, b) => ((a.it.ok || 0) > 0) - ((b.it.ok || 0) > 0)); const res = []; for (let t = 0; t < 30; t++) { const got = YUNI.halfWrongHalfRandom(order, 8, r); res.push({ n: got.length, uniq: new Set(got.map(x => x.idx)).size, wrong: got.filter(x => !x.it.ok).length, okFirst: got.some(x => x.it.ok) }); } return res; }")
+        gr = run_js(page, "() => { const C = window.CONTENT; return { gs: C.grades.map(g => g.g), n: C.grades.map(g => g.items.length), first: YUNI.state.grade, sp: C.grades.flatMap(g => g.items).filter(it => / /.test(it.text)).length, book: C.grades.every(g => g.book) }; }")
+        check(f'[{dev}] KREQ-40 급수 받아쓰기 = 학교 급수표 1~5급, 급마다 10문장, 1급부터 시작, 띄어쓰기 문장 포함', gr['gs'] == [1, 2, 3, 4, 5] and gr['n'] == [10] * 5 and gr['first'] == 1 and gr['sp'] >= 40 and gr['book'], json.dumps(gr))
+        check(f'[{dev}] KREQ-41 받아쓰기 반은 틀린 문장 먼저, 반은 랜덤 (10문장 중 미완 6: 8개 뽑으면 미완 4개 이상, 겹침 없음, 맞힌 문장도 가끔)', all(x['n'] == 8 and x['uniq'] == 8 and x['wrong'] >= 4 for x in hw) and any(x['okFirst'] for x in hw), json.dumps(hw[:3]))
         check(f'[{dev}] KREQ-04 은후 고쳐주기 3문제는 서로 다른 낱말', len(r1['fix_words']) == 3 and len(set(r1['fix_words'])) == 3, str(r1['fix_words']))
         check(f'[{dev}] KREQ-49 글자 고르기 보기 4개 (헷갈리는 글자가 모자라면 3개)', r1['opts_n'] and all(3 <= k <= 4 for k in r1['opts_n']) and r1['opts_n'].count(4) >= len(r1['opts_n']) / 2, str(r1['opts_n']))
         check(f'[{dev}] KREQ-01 보기 4개 가로 넘침 없음', not r1.get('pick_overflow'), str(r1.get('pick_overflow')))
@@ -214,6 +218,10 @@ with sync_playwright() as p:
         # 둘째 날: 한 번에 다 맞히기 → 별 확인 + 이전 버튼으로 같은 문제
         run_js(page, "() => { YUNI.state.log = {}; }")
         page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        mig = run_js(page, "() => { const saved = JSON.parse(localStorage.getItem(YUNI.KEY)); const old = Object.assign({}, saved, { grade: 9, badges: { 10: '2026-10-01' }, gradeOk: { 9: { 0: '2026-10-01' } }, settings: Object.assign({}, saved.settings, { spaceFrom: 7, punctFrom: 2 }) }); delete old.gradeV2; localStorage.setItem(YUNI.KEY, JSON.stringify(old)); return true; }")
+        page.reload(); page.wait_for_selector('.go-btn')
+        mg = run_js(page, "() => { const S = YUNI.state; return { g: S.grade, b: Object.keys(S.badges).length, ok: Object.keys(S.gradeOk).length, sf: S.settings.spaceFrom, pf: S.settings.punctFrom, v2: S.gradeV2, stars: S.stars }; }")
+        check(f'[{dev}] KREQ-40 예전(10급부터) 기록은 급수만 1급부터 다시 (별은 그대로)', mg['g'] == 1 and mg['b'] == 0 and mg['ok'] == 0 and mg['sf'] == 1 and mg['pf'] == 1 and mg['v2'] is True and mg['stars'] == st['stars'], json.dumps(mg))
         page.click('[data-act=go]'); cur = wait_change(page, '')
         a0 = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.act))")
         answer(page, a0); cur = wait_change(page, cur)
@@ -327,7 +335,7 @@ with sync_playwright() as p:
         # 맞춤법이 조금 틀린 낱말 → 바른 글자 알려 주고 인정
         sp = run_js(page, "() => { const g = YUNI.game; const deep = (w, u, d) => d <= 0 || YUNI.gameCands(w, u.concat([w])).some(r => deep(r, u.concat([w]), d - 1)); const ok = w => deep(w, g.used, 4); const c = YUNI.gameCands(g.prev, g.used).filter(w => ok(w) && [...w].length >= 2);"
           " for (const w of c) { const W = [...w]; const d = HANGUL.dec(W[W.length - 1]); const t = W.slice(0, -1).join('') + HANGUL.comp(d.cho, d.jung, d.jong ? '' : 'ㄴ');"
-          " if (!YUNI.GAME_WORDS.includes(t) && YUNI.nearWord(t, g.prev, g.used) === w) return { w, t }; } return null; }")
+          " if (!YUNI.GAME_WORDS.includes(t) && !YUNI.inBig(t) && YUNI.nearWord(t, g.prev, g.used) === w) return { w, t }; } return null; }")
         if sp:
             type_text(page, sp['t']); page.click('[data-act=submit]'); page.wait_for_timeout(600)
             hc = run_js(page, "() => { const h = document.getElementById('hintcard'); return h && !h.hidden ? h.innerText : ''; }")

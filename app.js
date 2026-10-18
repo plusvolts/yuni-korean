@@ -274,7 +274,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.7.1';
+  const APP_VERSION = '0.7.2';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -707,8 +707,8 @@ window.HANGUL = (() => {
   }
 
   /* ================= 수업 만들기 ================= */
-  // 하루 분량 (v0.6.1: 복습 4→6, 규칙 8→12, 도전 12→15(스티커 10→12개), 받아쓰기 6→8, 고쳐주기 2→3). 하루 총 30문제 (v0.6.0은 21, 그전 16)
-  const REVIEW_N = 6, RULE_N = 12, CHALLENGE_N = 15, CHALLENGE_OK = 12, DICT_N = 8, FIX_N = 3, PICK_WRONG = 3;
+  // 하루 분량 (v0.6.1: 복습 4→6, 규칙 8→12, 도전 12→15(스티커 10→12개), 받아쓰기 6→8, 고쳐주기 2→3 = 30문제. v0.7.2: 받아쓰기 8→10 = 32문제)
+  const REVIEW_N = 6, RULE_N = 12, CHALLENGE_N = 15, CHALLENGE_OK = 12, DICT_N = 10, FIX_N = 3, PICK_WRONG = 3;
   // 오늘의 낱말 (v0.7.0): 단원 낱말을 일차 수로 나눠 날마다 새 낱말만 (단원 24개 ÷ 3~5일 = 하루 5~8개, 날끼리 겹치지 않음).
   // v0.6.1에서는 6개씩 겹쳐 잡았지만 같은 낱말이 자꾸 나온다는 아빠 의견으로 바꿈
   function dayWords(u, d) {

@@ -199,7 +199,7 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-09 다음 날로 진도 이동', st['pos'] == {'u': 0, 'd': 2, 's': 0}, str(st['pos']))
         # v0.6.0 하루 분량: 인사 1 · 복습 4 · 규칙 8 · 받아쓰기 6 · 고쳐주기 2 = 21문제
         # 첫날은 아직 복습할 말이 없어 복습 단계가 안내 한 장(0문제) — 복습 4문제는 둘째 날에 확인
-        check(f'[{dev}] KREQ-04 하루 단계별 문항 수 (인사 1·규칙 12·받아쓰기 8·고쳐주기 3, 첫날 복습은 없음)', {k: v for k, v in r1['steps'].items() if k != 1} == {0: 1, 2: 12, 3: 8, 4: 3}, json.dumps(r1['steps']))
+        check(f'[{dev}] KREQ-04 하루 단계별 문항 수 (인사 1·규칙 12·받아쓰기 10·고쳐주기 3, 첫날 복습은 없음)', {k: v for k, v in r1['steps'].items() if k != 1} == {0: 1, 2: 12, 3: 10, 4: 3}, json.dumps(r1['steps']))
         dw = run_js(page, "() => { const S = YUNI.state; const w1 = YUNI.dayWords(S.pos.u, 1).map(w => w.word), w2 = YUNI.dayWords(S.pos.u, 2).map(w => w.word); return {n1: w1.length, n2: w2.length, same: w1.filter(w => w2.includes(w)).length}; }")
         check(f'[{dev}] KREQ-04 오늘의 낱말은 날마다 새 낱말 (하루 5개 이상, 다음 날과 안 겹침) ({json.dumps(dw)})', dw['n1'] >= 5 and dw['n2'] >= 5 and dw['same'] == 0, json.dumps(dw))
         dups = [w for w in set(r1['words']) if r1['words'].count(w) > 1]
@@ -208,7 +208,7 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-04 단원 1~7 모든 일차에서 인사·규칙·고쳐주기 낱말이 서로 다름 (단원마다 낱말 16개 이상)', plan_ok == [], json.dumps(plan_ok, ensure_ascii=False))
         hw = run_js(page, "() => { const items = Array.from({length: 10}, (_, i) => ({ it: { ok: i < 4 ? 1 : 0 }, idx: i })); const r = () => Math.random(); const order = items.slice().sort((a, b) => ((a.it.ok || 0) > 0) - ((b.it.ok || 0) > 0)); const res = []; for (let t = 0; t < 30; t++) { const got = YUNI.halfWrongHalfRandom(order, 8, r); res.push({ n: got.length, uniq: new Set(got.map(x => x.idx)).size, wrong: got.filter(x => !x.it.ok).length, okFirst: got.some(x => x.it.ok) }); } return res; }")
         gr = run_js(page, "() => { const C = window.CONTENT; return { gs: C.grades.map(g => g.g), n: C.grades.map(g => g.items.length), first: YUNI.state.grade, sp: C.grades.flatMap(g => g.items).filter(it => / /.test(it.text)).length, book: C.grades.every(g => g.book) }; }")
-        check(f'[{dev}] KREQ-40 급수 받아쓰기 = 학교 급수표 1~5급, 급마다 10문장, 1급부터 시작, 띄어쓰기 문장 포함', gr['gs'] == [1, 2, 3, 4, 5] and gr['n'] == [10] * 5 and gr['first'] == 1 and gr['sp'] >= 40 and gr['book'], json.dumps(gr))
+        check(f'[{dev}] KREQ-40 급수 받아쓰기 = 학교 급수표 1~5급, 급마다 10문장, 1급부터 시작(하루 10문장을 다 맞히면 바로 2급), 띄어쓰기 문장 포함', gr['gs'] == [1, 2, 3, 4, 5] and gr['n'] == [10] * 5 and gr['first'] in (1, 2) and gr['sp'] >= 40 and gr['book'], json.dumps(gr))
         check(f'[{dev}] KREQ-41 받아쓰기 반은 틀린 문장 먼저, 반은 랜덤 (10문장 중 미완 6: 8개 뽑으면 미완 4개 이상, 겹침 없음, 맞힌 문장도 가끔)', all(x['n'] == 8 and x['uniq'] == 8 and x['wrong'] >= 4 for x in hw) and any(x['okFirst'] for x in hw), json.dumps(hw[:3]))
         check(f'[{dev}] KREQ-04 은후 고쳐주기 3문제는 서로 다른 낱말', len(r1['fix_words']) == 3 and len(set(r1['fix_words'])) == 3, str(r1['fix_words']))
         check(f'[{dev}] KREQ-49 글자 고르기 보기 4개 (헷갈리는 글자가 모자라면 3개)', r1['opts_n'] and all(3 <= k <= 4 for k in r1['opts_n']) and r1['opts_n'].count(4) >= len(r1['opts_n']) / 2, str(r1['opts_n']))
@@ -242,10 +242,10 @@ with sync_playwright() as p:
         page.click('[data-act=quit]'); page.wait_for_selector('.go-btn')
         r2 = play_day(page, dev + '_d2', shots=False)
         day2 = run_js(page, "() => { const S = YUNI.state; return S.log[Object.keys(S.log).pop()] }")
-        check(f'[{dev}] 한 번에 다 맞힌 날 별 {day2["stars"]}개 (문제 30 + 보너스 3)', r2['end'] == 'reward' and 30 <= day2['stars'] <= 33, json.dumps(day2))
+        check(f'[{dev}] 한 번에 다 맞힌 날 별 {day2["stars"]}개 (문제 32 + 보너스 3)', r2['end'] == 'reward' and 32 <= day2['stars'] <= 35, json.dumps(day2))
         dups2 = [w for w in set(r2['words']) if r2['words'].count(w) > 1]
         check(f'[{dev}] KREQ-04 둘째 날도 복습 포함 같은 낱말이 두 번 안 나옴 (낱말 문제 {len(r2["words"])}개)', len(r2['words']) >= 21 and not dups2, str(dups2))
-        check(f'[{dev}] KREQ-04 둘째 날 단계별 문항 수 (복습 6·규칙 12·받아쓰기 8·고쳐주기 3 = 인사 포함 하루 30)', {k: v for k, v in r2['steps'].items() if k != 0} == {1: 6, 2: 12, 3: 8, 4: 3}, json.dumps(r2['steps']))
+        check(f'[{dev}] KREQ-04 둘째 날 단계별 문항 수 (복습 6·규칙 12·받아쓰기 10·고쳐주기 3 = 인사 포함 하루 32)', {k: v for k, v in r2['steps'].items() if k != 0} == {1: 6, 2: 12, 3: 10, 4: 3}, json.dumps(r2['steps']))
 
         # --- KREQ-64 (공통 64번) 별: 몇 번 만에 맞혀도 1개, 정답 본 뒤 따라 써도 1개, 넘어가면 0개, 문제당 한 번만 ---
         run_js(page, "() => { YUNI.state.log = {}; YUNI.state.pos = {u: 0, d: 1, s: 0}; }")

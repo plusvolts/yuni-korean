@@ -61,6 +61,12 @@ Object.entries(C.dict || {}).forEach(([w, d]) => {
   String(d.use || '').split(' / ').forEach(l => { const m = l.match(/^([^:]+):\s*(.+)$/); addKo(m ? m[2] : l); });
 });
 addKo('끝말잇기 하자! 내가 먼저 할게.'); addKo('이제 네 차례!');
+// ③-3 속담·관용어·사자성어 놀이 (v0.8.0 KREQ-54): 표현·뜻·이럴 때·활용 대화·힌트. 안내 말(ko('…'))은 ①에서 자동으로 모여요
+(C.idioms || []).forEach(it => {
+  addKo(`${it.text}.`); addKo(it.mean); addKo(it.when);
+  String(it.use || '').split(' / ').forEach(l => { const m = l.match(/^([^:]+):\s*(.+)$/); addKo(m ? m[2] : l); });
+  addKo(`${it.mean} 빈칸의 첫 글자는 '${[...it.blank][0]}'이에요.`); addKo(`뜻은 이거예요. ${it.mean}`); addKo(`이럴 때 쓰는 말이에요. ${it.when}.`);
+});
 // ④ 받아쓰기로 불러주는 낱말·문장
 C.units.forEach(u => (u.words || []).forEach(w => addDict(w.word)));
 C.grades.forEach(g => g.items.forEach(it => addDict(it.text)));

@@ -320,6 +320,25 @@ textarea { min-height: 90px; font-family: ui-monospace, monospace; font-size: 13
   .use-say { font-size: 17px; padding: 6px 10px; }
 }
 
+/* 속담·관용어·사자성어 놀이 (KREQ-54, v0.8.0) */
+.idiom-btn { background: #f3e8ff; }
+.ikind { display: inline-block; padding: 4px 14px; border-radius: 999px; font-weight: 900; font-size: var(--fs-sm); background: #ffe8d1; color: #8a4b00; }
+.ikind.k2 { background: #e6f4ff; color: #1b5e9e; }
+.ikind.k3 { background: #f3e8ff; color: #6a1b9a; }
+.iword { font-size: clamp(28px, 5vw, 44px); font-weight: 900; line-height: 1.35; word-break: keep-all; max-width: 600px; }
+.ilit { color: var(--muted); font-weight: 800; font-size: var(--fs-sm); }
+.imean { max-width: 600px; width: 100%; font-size: var(--fs-md); font-weight: 700; line-height: 1.6; text-align: left; }
+.iwhen { background: #fff8d6; }
+.ichoices { max-width: 600px; }
+.choice.ichoice { min-height: 76px; font-size: var(--fs-md); font-weight: 800; line-height: 1.45; padding: 10px 18px; text-align: left; word-break: keep-all; justify-items: start; }
+.choice.ichoice.big { font-size: clamp(32px, 5vw, 48px); text-align: center; justify-items: center; }
+.result-list .ikind { font-size: 13px; padding: 2px 10px; }
+@media (max-width: 600px) {
+  .iword { font-size: 24px; }
+  .choice.ichoice { min-height: 64px; font-size: 17px; padding: 8px 14px; }
+  .choice.ichoice.big { font-size: 30px; }
+}
+
 /* 결과·아빠 화면 */
 .result-list { text-align: left; font-size: var(--fs-md); font-weight: 700; line-height: 1.8; width: min(560px, 100%); }
 .rates { display: grid; gap: 8px; }

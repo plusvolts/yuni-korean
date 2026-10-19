@@ -274,7 +274,7 @@ window.HANGUL = (() => {
 
 (() => {
   'use strict';
-  const APP_VERSION = '0.7.2';
+  const APP_VERSION = '0.8.0';
   const HG = window.HANGUL;
   const C = window.CONTENT;
   const U = C.units;
@@ -297,16 +297,18 @@ window.HANGUL = (() => {
         spaceOn: true, spaceFrom: 1, punctOn: true, punctFrom: 1, classSpace: true, classPunct: true, // v0.7.1: 학교 급수표(1급~5급)는 1급부터 띄어쓰기·문장부호 그대로
         goalStars: 50, goalText: '아빠와 약속한 선물',
         gameOn: true, useCards: true, // v0.5.0: 끝말잇기 놀이 보이기, 맞힌 뒤 "이렇게 써요" 카드
+        idiomOn: true, // v0.8.0: 홈에 속담·관용어·사자성어 놀이 버튼 (KREQ-54)
       },
       pos: { u: 0, d: 1, s: 0 }, done: {}, stars: 0, goalBase: 0,
       srs: {}, days: [], log: {}, stickers: {}, override: '', rewards: [],
       // v0.7.1: gradeV2 = 급수가 학교 급수표 1급부터 차례로(오름차순). 그전엔 10급부터 내려감
       grade: 1, gradeOk: {}, badges: {}, ruleStats: {}, gradeV2: true, cls: { title: '', date: '', items: [] }, special: [], dictCount: 0,
       game: { plays: 0, best: 0, words: 0, stars: 0, unknown: {}, spelled: {} }, // v0.5.0 끝말잇기 기록 (KREQ-52)
+      idiom: { plays: 0, stars: 0, seen: {} }, // v0.8.0 속담·관용어·사자성어 기록 (KREQ-54): seen[표현] = { n, ok, wrong, last }
     };
   }
   function merge(o) {
-    const d = defaults(); const m = Object.assign(d, o, { settings: Object.assign(d.settings, o.settings || {}), cls: Object.assign(d.cls, o.cls || {}), game: Object.assign(d.game, o.game || {}) });
+    const d = defaults(); const m = Object.assign(d, o, { settings: Object.assign(d.settings, o.settings || {}), cls: Object.assign(d.cls, o.cls || {}), game: Object.assign(d.game, o.game || {}), idiom: Object.assign(d.idiom, o.idiom || {}) });
     // v0.6.1: 하루 30문제가 되면서 기본 시간 20분 → 30분. 예전 기본값(20) 그대로인 기기만 한 번 올려요 (아빠가 바꾼 값은 그대로)
     if (!m.settings.limitV2) { if (Number(m.settings.dailyLimit) === 20) m.settings.dailyLimit = 30; m.settings.limitV2 = true; }
     // v0.7.1: 받아쓰기 급수를 학교 급수표(1급~5급, 오름차순)로 바꿈 → 예전(10급부터) 기록이 있는 기기는 급수 진도·합격 기록만 1급부터 다시 (별·스티커·낱말 기록은 그대로)
@@ -359,7 +361,8 @@ window.HANGUL = (() => {
   const dictOf = w => DICT[normText(w)] || null;
   const meanSay = w => { const d = dictOf(w); return d && d.mean ? `${normText(w)}! ${d.mean}` : ''; }; // 녹음 키: "낱말! 뜻"
   // use: "누가: 말 / 누가: 말" → [{who, say}]
-  const useLines = w => { const d = dictOf(w); if (!d || !d.use) return []; return d.use.split(' / ').map(l => { const m = l.match(/^([^:]+):\s*(.+)$/); return m ? { who: m[1].trim(), say: m[2].trim() } : { who: '', say: l.trim() }; }); };
+  const parseUse = str => String(str || '').split(' / ').map(l => { const m = l.match(/^([^:]+):\s*(.+)$/); return m ? { who: m[1].trim(), say: m[2].trim() } : { who: '', say: l.trim() }; }).filter(l => l.say);
+  const useLines = w => { const d = dictOf(w); return d && d.use ? parseUse(d.use) : []; }; // 속담 놀이(KREQ-54)도 parseUse·useCardLinesHtml을 같이 써요
   const WHO_ICON = { '로보': '🤖', '윤이': '🧒', '아빠': '👨', '엄마': '👩', '선생님': '👩‍🏫', '할머니': '👵', '할아버지': '👴' };
   function whoHtml(who) {
     const fid = Object.keys(C.friends).find(k => C.friends[k].name === who);
@@ -369,10 +372,11 @@ window.HANGUL = (() => {
   }
   // 대화 한 줄에서 낱말을 진하게 (조사가 붙어도 앞부분이 같으면)
   const markWord = (say, w) => { const i = say.indexOf(w); return i < 0 ? esc(say) : `${esc(say.slice(0, i))}<b class="uw">${esc(w)}</b>${esc(say.slice(i + w.length))}`; };
-  function useCardHtml(w) {
-    const lines = useLines(w); if (!lines.length) return '';
-    return `<div class="use-title">💬 이렇게 써요</div>${lines.map(l => `<div class="use-line">${l.who ? whoHtml(l.who) : ''}<span class="use-say">${markWord(l.say, normText(w))}</span></div>`).join('')}`;
+  function useCardLinesHtml(lines, mark) {
+    if (!lines.length) return '';
+    return `<div class="use-title">💬 이렇게 써요</div>${lines.map(l => `<div class="use-line">${l.who ? whoHtml(l.who) : ''}<span class="use-say">${markWord(l.say, mark)}</span></div>`).join('')}`;
   }
+  const useCardHtml = w => useCardLinesHtml(useLines(w), normText(w));
 
   /* ================= 소리 ================= */
   let voices = [];
@@ -565,7 +569,7 @@ window.HANGUL = (() => {
     ko('오늘 국어는 여기까지! 정말 잘했어요.');
   }
   setInterval(() => {
-    if ((screen === 'lesson' || screen === 'game') && !document.hidden) { todayLog().sec += 10; save(); } // 끝말잇기도 하루 시간에 들어가요
+    if ((screen === 'lesson' || screen === 'game' || screen === 'idiom') && !document.hidden) { todayLog().sec += 10; save(); } // 끝말잇기·속담 놀이도 하루 시간에 들어가요
   }, 10000);
 
   /* ================= 우리 반 받아쓰기 ================= */
@@ -604,6 +608,7 @@ window.HANGUL = (() => {
           <button class="btn" data-act="picker">🧭 단계 고르기</button>
           <button class="btn" data-act="stickers">📒 스티커북</button>
           ${S.settings.gameOn !== false ? '<button class="btn game-btn" data-act="game">🔗 끝말잇기</button>' : ''}
+          ${S.settings.idiomOn !== false && (C.idioms || []).length ? '<button class="btn idiom-btn" data-act="idiom">📜 속담·사자성어</button>' : ''}
           ${cls ? `<button class="btn cls-btn" data-act="cls">📝 우리 반 받아쓰기<small>${esc(clsLabel())}</small></button>` : ''}
         </div>
         <button class="goal card" data-act="rewards" style="text-align:left"><div class="row"><b>🎁 ${esc(S.settings.goalText)}</b><div class="spacer"></div><span class="muted">${g >= goal ? '달성! 🎉' : `${g} / ${goal}`}</span></div>
@@ -617,6 +622,7 @@ window.HANGUL = (() => {
       rewards: rewardScreen,
       cls: startClassPractice,
       game: startGame,
+      idiom: startIdiom,
       parent: () => gateScreen(parentScreen),
       hello: () => { hush(); ko(`안녕, ${callName()}! 오늘도 같이 받아쓰기 하자!`); },
       install: async () => { if (installEvt) { installEvt.prompt(); try { await installEvt.userChoice; } catch (e) { /* */ } installEvt = null; homeScreen(); } },
@@ -1633,6 +1639,165 @@ window.HANGUL = (() => {
     ko(why === 'robotLost' ? '내가 못 이었어! 네가 이겼어!' : why === 'draw' ? '둘 다 못 이었어! 비겼어!' : G.n >= 5 ? '끝말잇기 끝! 정말 잘했어!' : '끝말잇기 끝! 다음에 또 하자!');
   }
 
+  /* ================= 속담·관용어·사자성어 놀이 (KREQ-54, v0.8.0) =================
+   * 홈의 "📜 속담·사자성어" 버튼. 한 번에 IDIOM_N개(속담·관용어·사자성어를 번갈아), 말마다
+   *   ① 뜻 카드 (표현·그림·뜻·이럴 때 써요, 읽어 줌) → ② 문제 하나 (뜻 고르기 / 빈칸 채우기 / 이럴 때 쓰는 말 고르기, 보기 4개)
+   *   → ③ 맞히면 "이렇게 써요" 활용 대화 카드(KREQ-53과 같은 모양)를 읽어 주고 다음으로.
+   * 틀리면 KREQ-07 흐름: 1번째 다시 생각(문제 다시 읽기) → 2번째 힌트 카드 → 3번째 정답이 반짝이고 따라 누르기 (땡·X 없음, 주황 표시).
+   * 별: 몇 번 만에 맞혀도(정답을 따라 눌러도) 1개, 문제당 한 번만, 하루 50개 안에서 (KREQ-64·18). 안 본 말 → 틀린 말 → 배운 말 순서로 나와요.
+   * 기록 S.idiom.seen[표현] = { n, ok(첫 시도 정답), wrong, last }. 내용은 content.js idioms. 녹음이 없는 문장은 기기 음성 (KREQ-65) */
+  const IDIOMS = (C.idioms || []).filter(it => it && it.text && it.mean);
+  const IDIOM_N = 5, IDIOM_KINDS = ['속담', '관용어', '사자성어'], IDIOM_QT = ['mean', 'blank', 'when'];
+  const idiomHl = it => it.hl || it.text;
+  const idiomSeen = () => S.idiom.seen || (S.idiom.seen = {});
+  const idiomLearned = it => { const s = idiomSeen()[it.text]; return !!(s && s.ok > 0); };
+  const idiomLearnedCount = () => IDIOMS.filter(idiomLearned).length;
+  // 이번에 할 말 고르기: 종류를 번갈아 가며, 종류 안에서는 아직 안 본 말 → 틀린 말(첫 시도 정답 0) → 배운 말(적게 맞힌 것, 오래된 것 먼저)
+  function idiomPick(n) {
+    const seen = idiomSeen();
+    const score = it => { const s = seen[it.text]; if (!s) return 0; if (!(s.ok > 0)) return 1; return 2 + s.ok; };
+    const byKind = {}; IDIOMS.forEach(it => (byKind[it.kind] = byKind[it.kind] || []).push(it));
+    const kinds = IDIOM_KINDS.filter(k => byKind[k]).concat(Object.keys(byKind).filter(k => !IDIOM_KINDS.includes(k)));
+    kinds.forEach(k => byKind[k].sort((a, b) => score(a) - score(b) || ((seen[a.text] || {}).last || '').localeCompare((seen[b.text] || {}).last || '')));
+    const out = []; const ptr = {}; let i = S.idiom.plays || 0; let guard = 0;
+    while (out.length < n && guard++ < 200) {
+      if (kinds.every(k => (ptr[k] || 0) >= byKind[k].length)) break;
+      const k = kinds[i++ % kinds.length]; const p = ptr[k] || 0;
+      if (p < byKind[k].length) { out.push(byKind[k][p]); ptr[k] = p + 1; }
+    }
+    return out;
+  }
+  // 문제 만들기: mean = 뜻 고르기(같은 종류의 다른 뜻 3개), blank = 빈칸 채우기(wrongs 3개), when = 이럴 때 쓰는 말 고르기(같은 종류의 다른 말 3개)
+  function idiomQuiz(it, qt, r) {
+    const others = shuffle(IDIOMS.filter(x => x !== it && x.kind === it.kind && x.mean !== it.mean), r).slice(0, 3);
+    if (qt === 'blank' && it.blank && it.text.includes(it.blank) && (it.wrongs || []).length >= 1) {
+      const wrongs = [...new Set(it.wrongs.filter(w => w && w !== it.blank))].slice(0, 3);
+      return { qt, prompt: '빈칸에 들어갈 말을 골라요', show: it.text.replace(it.blank, '○'.repeat(HG.syls(it.blank).length)), opts: shuffle([it.blank, ...wrongs], r), ans: it.blank };
+    }
+    if (qt === 'when' && it.when && others.length) return { qt, prompt: '이럴 때 쓰는 말은?', show: it.when, opts: shuffle([it.text, ...others.map(o => o.text)], r), ans: it.text };
+    return { qt: 'mean', prompt: '이 말은 무슨 뜻일까요?', show: it.text, opts: shuffle([it.mean, ...others.map(o => o.mean)], r), ans: it.mean };
+  }
+  function idiomHint(it, q) {
+    if (q.qt === 'blank') return `${it.mean} 빈칸의 첫 글자는 '${HG.syls(it.blank)[0]}'이에요.`;
+    if (q.qt === 'when') return `뜻은 이거예요. ${it.mean}`;
+    return it.when ? `이럴 때 쓰는 말이에요. ${it.when}.` : `${HG.syls(it.mean.replace(/\s/g, '')).slice(0, 2).join('')}… 로 시작하는 뜻이에요.`;
+  }
+  let P = null; // 지금 하는 속담 놀이
+  function startIdiom() {
+    if (!IDIOMS.length) return toast('속담·관용어 내용이 아직 없어요 (content.js idioms)');
+    if (lockReason()) return lockedScreen();
+    if (!S.days.includes(today())) S.days.push(today());
+    S.idiom.plays = (S.idiom.plays || 0) + 1; save();
+    const r = rng('idiom' + today() + S.idiom.plays); const items = idiomPick(IDIOM_N);
+    const acts = []; items.forEach((it, k) => { acts.push({ type: 'icard', it, k }); acts.push({ type: 'iquiz', it, k, q: idiomQuiz(it, IDIOM_QT[(k + S.idiom.plays) % IDIOM_QT.length], r) }); });
+    P = { items, acts, i: 0, awarded: {}, statted: {}, earned: 0, results: [], done: false, heard: 0 };
+    idiomShow();
+  }
+  const kindChip = k => `<span class="ikind ${k === '속담' ? 'k1' : k === '관용어' ? 'k2' : 'k3'}">${esc(k)}</span>`;
+  function idiomFrame(inner, a) {
+    const first = P.i === 0;
+    return `<div class="screen">
+      <div class="topbar">
+        <button class="icon-btn" data-act="quit" aria-label="처음으로">🏠</button>
+        <button class="icon-btn" data-act="prev" aria-label="이전"${first ? ' disabled style="opacity:.35"' : ''}>◀</button>
+        <div class="step-name game-title">📜 <span class="gl">재미난 말 · </span>${esc(a.it.kind)} <b>${a.k + 1}</b> / ${P.items.length}</div>
+        <div class="spacer"></div><div class="stars">⭐ ${S.stars}</div>
+      </div>
+      <div class="stage split">${inner}</div>
+    </div>`;
+  }
+  const idiomHandlers = () => ({ quit: () => (P.results.length ? idiomEnd('quit') : homeScreen()), prev: () => { hush(); if (P.i > 0) { P.i--; idiomShow(); } }, next: () => { hush(); idiomNext(); } });
+  function idiomNext() { P.i++; if (P.i >= P.acts.length) return idiomEnd('done'); if (lockReason()) return lockedScreen(); idiomShow(); }
+  function idiomShow() { const a = P.acts[P.i]; if (a.type === 'icard') idiomCard(a); else idiomQuizAct(a); }
+  /* ① 뜻 카드 */
+  function idiomCard(a) {
+    const it = a.it;
+    render('idiom', idiomFrame(`<div class="prompt rule-card">
+        ${kindChip(it.kind)}
+        <div class="pic">${esc(it.img || '📜')}</div>
+        <div class="iword">${esc(it.text)}</div>
+        ${it.lit ? `<div class="ilit">${esc(it.lit)}</div>` : ''}
+        <div class="card rule-text imean">📖 ${esc(it.mean)}</div>
+        <div class="listen-row"><button class="listen" data-act="play" aria-label="듣기">🔊</button></div>
+      </div>
+      <div class="prompt">
+        ${it.when ? `<div class="card imean iwhen">💡 이럴 때 써요<br>${esc(it.when)}</div>` : ''}
+        <div class="next-row"><button class="btn primary" data-act="next">알았어요! 문제 풀기 ▶</button></div>
+      </div>`, a), { ...idiomHandlers(), play: () => { hush(); ko(`${it.text}. ${it.mean}`); } });
+    const my = actToken;
+    (async () => {
+      if (!P.heard) { P.heard = 1; await ko('재미난 말을 배워 볼까? 잘 듣고 따라 말해 봐요.'); if (my !== actToken) return; }
+      await ko(`${it.text}.`); if (my !== actToken) return; await ko(it.mean);
+    })();
+  }
+  function idiomRecord(it, ok) {
+    if (P.statted[it.text]) return; P.statted[it.text] = 1;
+    const s = idiomSeen()[it.text] || (idiomSeen()[it.text] = { n: 0, ok: 0, wrong: 0 });
+    s.n++; if (ok) s.ok++; else s.wrong++; s.last = today(); save();
+  }
+  /* ② 문제 → ③ 활용 대화 */
+  function idiomQuizAct(a) {
+    const it = a.it, q = a.q; const key = 'q' + a.k; let att = 0, done = false;
+    const readQ = () => ko(q.qt === 'mean' ? `${it.text}.` : q.qt === 'blank' ? it.mean : it.when);
+    const reveal = () => { document.querySelectorAll('.ichoice').forEach(c => { if (c.dataset.arg === q.ans) c.classList.add('glow'); }); setHint('반짝이는 답을 따라 눌러요 👉'); };
+    const wrong = async btn => {
+      if (done) return;
+      att++; soft(); btn.classList.add('wrong'); const my = actToken;
+      if (att === 1) { idiomRecord(it, false); setHint('다시 한번 생각해 봐요 🤔'); await ko('다시 생각해 볼까?'); if (my === actToken) await readQ(); }
+      else if (att === 2) { const el = document.getElementById('hintcard'); const h = idiomHint(it, q); if (el) { el.hidden = false; el.innerHTML = `<b>💡 힌트</b><div>${esc(h)}</div>`; } setHint(''); await ko(h); }
+      if (my !== actToken) return;
+      if (att >= 3 || document.querySelectorAll('.ichoice:not(.wrong)').length <= 1) reveal();
+    };
+    const right = async btn => {
+      if (done) return; done = true; btn.classList.add('right'); const my = actToken; ding();
+      if (att === 0) idiomRecord(it, true);
+      let n = 0; if (!P.awarded[key]) { P.awarded[key] = 1; n = addStars(1); P.earned += n; } // 문제당 한 번만 (◀ 이전으로 다시 풀어도 없음)
+      P.results = P.results.filter(x => x.text !== it.text).concat([{ text: it.text, ok: att === 0 }]);
+      flash(n ? '⭐' : '👍'); setHint(att === 0 ? '정답! 🎉' : '맞았어요! 👍');
+      await ko(att === 0 ? praise() : '맞았어! 잘했어요!'); if (my !== actToken) return;
+      const el = document.getElementById('usecard'); const lines = parseUse(it.use);
+      if (el && lines.length && S.settings.useCards !== false) {
+        el.hidden = false; el.innerHTML = useCardLinesHtml(lines, idiomHl(it)) + '<div class="next-row"><button class="btn small primary" data-act="next">다음 ▶</button></div>';
+        try { el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (e) { /* */ }
+        for (const l of lines) { if (my !== actToken) return; await ko(l.say); await sleep(150); }
+        if (my !== actToken) return; await sleep(1200);
+      } else await sleep(400);
+      if (my === actToken) idiomNext();
+    };
+    const showHtml = q.qt === 'when' ? `<div class="card imean iwhen">${esc(q.show)}</div>` : `<div class="pic sm">${esc(it.img || '📜')}</div><div class="iword">${esc(q.show)}</div>`;
+    render('idiom', idiomFrame(`<div class="prompt">
+        ${kindChip(it.kind)}
+        <div class="bubble">${esc(q.prompt)}</div>
+        ${showHtml}
+        <div class="listen-row"><button class="listen" data-act="play" aria-label="다시 듣기">🔊</button></div>
+        <div class="hint" id="hint"></div>
+        <div class="hintcard" id="hintcard" hidden></div>
+        ${USE_SLOT}
+      </div>
+      <div class="choices text-choices ichoices">${q.opts.map(o => `<button class="choice text ichoice${q.qt === 'blank' ? ' big' : ''}" data-act="pick" data-arg="${esc(o)}">${esc(o)}</button>`).join('')}</div>`, a), {
+      ...idiomHandlers(),
+      play: () => { hush(); readQ(); },
+      pick: (arg, btn) => { if (done || btn.classList.contains('wrong')) return; hush(); if (arg === q.ans) right(btn); else wrong(btn); },
+    });
+    const my = actToken;
+    (async () => { await ko(q.prompt); if (my === actToken) await readQ(); })();
+  }
+  function idiomEnd(why) {
+    if (!P || P.done) return; P.done = true;
+    const ok = P.results.filter(x => x.ok).length;
+    S.idiom.stars = (S.idiom.stars || 0) + P.earned; save();
+    const all = why === 'done' && ok === P.items.length;
+    render('reward', `<div class="screen"><div class="reward">
+      <div class="robot">📜</div>
+      <div class="bubble">${why === 'done' ? '재미난 말 다 배웠어요!' : '재미난 말 끝!'}<small>${P.results.length}개 중 한 번에 맞힌 말 ${ok}개 · 배운 말 ${idiomLearnedCount()} / ${IDIOMS.length}</small></div>
+      ${P.earned ? `<div class="big-stars">⭐ +${P.earned}</div>` : ''}
+      <div class="card result-list">${P.items.map(it => { const r = P.results.find(x => x.text === it.text); return `<div>${r ? (r.ok ? '✅' : '🔁') : '⬜'} ${kindChip(it.kind)} ${esc(it.text)}</div>`; }).join('')}</div>
+      <div class="home-links"><button class="btn" data-act="again">한 번 더</button><button class="btn primary" data-act="home">끝!</button></div>
+    </div></div>`, { home: homeScreen, again: startIdiom });
+    if (all) { confetti(); tone([523, 659, 784, 1046], 0.16); }
+    ko(all ? '재미난 말 다 배웠어! 정말 잘했어요!' : why === 'done' ? '재미난 말 다 배웠어! 틀린 말은 다음에 또 나와요.' : '재미난 말 끝! 다음에 또 하자!');
+  }
+
   /* ================= 하루 끝 ================= */
   function confetti() {
     const em = ['⭐', '🌟', '🎉', '✨'];
@@ -1893,6 +2058,20 @@ window.HANGUL = (() => {
     // 낱말 사전(dict): 단원·급수 낱말이 모두 있어야 "이렇게 써요" 카드가 나와요 (KREQ-53). 끝말잇기에서 막히는 낱말은 참고로
     const need = new Set(); U.forEach(un => (un.words || []).forEach(w => need.add(w.word))); C.grades.forEach(g => g.items.forEach(it => { const t = normText(it.text); if (!/[\s.!?,]/.test(t)) need.add(t); })); // 급수표 낱말(띄어쓰기·문장부호 없는 것)만 (v0.7.1)
     need.forEach(w => { const d = DICT[w]; if (!d || !d.mean || !d.use) warn.push(`낱말 사전(dict)에 "${w}"의 뜻·활용 대화가 없어요 (content.js dict에 추가)`); });
+    // 속담·관용어·사자성어 (KREQ-54): 종류·표현·뜻·빈칸·보기·상황·대화가 모두 있어야 해요
+    const seenI = new Set();
+    (C.idioms || []).forEach((it, i) => {
+      const tag = `속담·관용어 ${i + 1}번 "${(it && it.text) || '?'}"`;
+      if (!it || !it.text || !it.mean || !it.kind) { warn.push(`${tag}: kind·text·mean이 있어야 해요`); return; }
+      if (seenI.has(it.text)) warn.push(`${tag}: 같은 표현이 두 번 있어요`); seenI.add(it.text);
+      if (!IDIOM_KINDS.includes(it.kind)) note.push(`${tag}: 종류 "${it.kind}"는 속담·관용어·사자성어가 아니에요`);
+      if (!it.blank || !it.text.includes(it.blank)) warn.push(`${tag}: blank(빈칸 말)가 text 안에 있어야 해요`);
+      if (!Array.isArray(it.wrongs) || it.wrongs.filter(w => w && w !== it.blank).length < 3) warn.push(`${tag}: wrongs(헷갈리는 말) 3개가 필요해요`);
+      if (!it.when) warn.push(`${tag}: when(이럴 때 써요)이 없어요`);
+      if (!it.use || !it.use.includes(idiomHl(it))) warn.push(`${tag}: use(활용 대화)에 표현${it.hl ? `(hl "${it.hl}")` : ''}이 들어가야 해요`);
+      if (!it.img) note.push(`${tag}: 그림(img)이 없어요`);
+    });
+    IDIOM_KINDS.forEach(k => { const n = (C.idioms || []).filter(it => it && it.kind === k).length; if (n < 4) warn.push(`속담·관용어: ${k}가 ${n}개뿐이에요 (문제 보기 4개를 만들려면 4개 이상)`); });
     const dead = GAME_WORDS.filter(w => !gameCands(w, new Set([w])).length);
     if (dead.length) note.push(`끝말잇기: 뒤를 이을 낱말이 없는 낱말 ${dead.length}개 (${dead.slice(0, 12).join(', ')}${dead.length > 12 ? ' …' : ''}) — 로보는 이 낱말을 피하고, 윤이가 쓰면 윤이가 이겨요`);
     return { warn, note };
@@ -1995,6 +2174,13 @@ window.HANGUL = (() => {
         ${Object.keys(S.game.spelled || {}).length ? `<h3 style="margin-top:10px">맞춤법을 알려 준 낱말</h3><p>${Object.entries(S.game.spelled).map(([t, w]) => `<span class="chip">${esc(t)} → ${esc(w)}</span>`).join(' ')}</p>` : ''}
         ${Object.keys(S.game.unknown || {}).length || Object.keys(S.game.spelled || {}).length ? '<button class="btn small" data-act="gameclear">목록 지우기</button>' : ''}
       </div>
+      <div class="card"><h3>📜 속담·관용어·사자성어</h3>
+        <div class="kv"><div>놀이 횟수<b>${S.idiom.plays || 0}번</b></div><div>배운 말<b>${idiomLearnedCount()} / ${IDIOMS.length}</b></div><div>받은 별<b>${S.idiom.stars || 0}개</b></div></div>
+        <p class="muted">홈의 📜 버튼. 한 번에 ${IDIOM_N}개(속담·관용어·사자성어를 번갈아): 뜻 카드 → 문제(뜻 고르기·빈칸 채우기·이럴 때 쓰는 말) → "이렇게 써요" 대화. 아직 안 본 말 → 틀린 말 → 배운 말 순서로 나와요. 문제 하나에 별 1개. 내용은 <b>content.js</b>의 idioms에서 고쳐요.</p>
+        <h3 style="margin-top:10px">자주 틀리는 말</h3>
+        ${(() => { const hardI = Object.entries(idiomSeen()).filter(([, r]) => r.wrong > 0).sort((a, b) => b[1].wrong - a[1].wrong).slice(0, 10); return hardI.length ? `<ol class="list">${hardI.map(([t, r]) => `<li><b>${esc(t)}</b> — ${r.wrong}번 틀림${r.ok > 0 ? ' · 이제 알아요' : ''}</li>`).join('')}</ol>` : '<p class="muted">아직 없어요</p>'; })()}
+        ${IDIOMS.length ? `<details><summary class="muted">전체 ${IDIOMS.length}개 (배운 말 ✅)</summary><p>${IDIOMS.map(it => `<span class="chip">${idiomLearned(it) ? '✅ ' : ''}${esc(it.text)}</span>`).join(' ')}</p></details>` : ''}
+      </div>
       <div class="card"><h3>진도 조정</h3>
         <p>지금 진도: <b>${esc(unitOf(S.pos.u).title)} ${S.pos.d}일차 · ${STEPS[S.pos.s].name}</b> <span class="muted">(코드 ${code})</span> · 받아쓰기 <b>${S.grade}급</b></p>
         <div class="form">
@@ -2006,7 +2192,7 @@ window.HANGUL = (() => {
         </div>
         <div class="row" style="margin-top:10px;flex-wrap:wrap"><button class="btn small primary" data-act="adjpos">이 진도로 바꾸기</button>
           <button class="btn small" data-act="resetprog" id="resetProgBtn">진도 초기화</button></div>
-        <p class="muted">일차는 단원 길이에 맞춰 줄어들어요. 진도 초기화: 진도·완료한 날·스티커·급수·어려운 말 상자·정답률을 처음으로 돌려요. 별·받은 보상·설정·우리 반 문장은 그대로예요.</p>
+        <p class="muted">일차는 단원 길이에 맞춰 줄어들어요. 진도 초기화: 진도·완료한 날·스티커·급수·어려운 말 상자·정답률·속담 배운 기록을 처음으로 돌려요. 별·받은 보상·설정·우리 반 문장은 그대로예요.</p>
       </div>
       `)}
       ${ptabPanel('settings', `
@@ -2021,6 +2207,7 @@ window.HANGUL = (() => {
         <label>받아쓰기 읽기 속도${sel('dictRate', [[0.65, '아주 천천히'], [0.8, '천천히 (추천)'], [0.9, '보통']], st.dictRate)}</label>
         ${chk('useCards', '맞힌 뒤 "이렇게 써요" 활용 대화 카드 보여주기 (KREQ-53)')}
         ${chk('gameOn', '홈에 끝말잇기 놀이 버튼 보이기 (KREQ-52)')}
+        ${chk('idiomOn', '홈에 속담·관용어·사자성어 놀이 버튼 보이기 (KREQ-54)')}
       </div></div>
       <div class="card"><h3>설정</h3><div class="form">
         <label>부르는 이름<input data-set="childName" value="${esc(st.childName)}"></label>
@@ -2104,7 +2291,7 @@ window.HANGUL = (() => {
       },
       resetprog: (x, btn) => {
         if (!btn.dataset.sure) { btn.dataset.sure = 1; btn.textContent = '정말 진도 초기화? 한 번 더 누르기'; return; }
-        S.pos = { u: 0, d: 1, s: 0 }; S.done = {}; S.stickers = {}; S.srs = {}; S.grade = 1; S.gradeOk = {}; S.badges = {}; S.ruleStats = {}; S.dictCount = 0;
+        S.pos = { u: 0, d: 1, s: 0 }; S.done = {}; S.stickers = {}; S.srs = {}; S.grade = 1; S.gradeOk = {}; S.badges = {}; S.ruleStats = {}; S.dictCount = 0; S.idiom.seen = {}; // v0.8.0: 속담·관용어 배운 기록도 처음으로 (KREQ-54)
         save(); toast('진도를 처음으로 돌렸어요'); parentScreen();
       },
       star: a => { S.stars = Math.max(0, S.stars + Number(a)); S.goalBase = Math.min(S.goalBase, S.stars); save(); parentScreen(); },
@@ -2146,7 +2333,8 @@ window.HANGUL = (() => {
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) { /* */ }
   document.addEventListener('visibilitychange', () => { if (document.hidden) { hush(); stopRecording(); } });
   window.YUNI = { get state() { return S; }, ko, dictate, hush, get act() { return L && L.acts[L.i]; }, get lesson() { return L; }, parseCode, contentWarnings, KEY, APP_VERSION, DAY_STAR_MAX, DAY_BONUS,
-    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, inBig, bigMean, useLines, meanSay, dayWords, dayPlan, halfWrongHalfRandom }; // 테스트용
+    get game() { return G ? { prev: G.prev, n: G.n, solo: G.solo, stars: G.stars, chain: G.chain, used: [...G.used], busy: G.busy, done: G.done, hint: G.hint } : null; }, startGame, gameCands: (prev, used) => gameCands(prev, new Set(used || [])), nearWord: (t, prev, used) => nearWord(t, prev, new Set(used || [])), GAME_WORDS, inBig, bigMean, useLines, meanSay, dayWords, dayPlan, halfWrongHalfRandom,
+    get idiom() { return P ? { i: P.i, n: P.acts.length, act: P.acts[P.i], acts: P.acts, earned: P.earned, results: P.results, done: P.done } : null; }, startIdiom, IDIOMS, idiomPick, idiomQuiz }; // 테스트용
   homeScreen();
   // 시작하고 잠시 뒤 새 버전이 있는지 조용히 확인
   setTimeout(() => { if (!/^https?:/.test(location.protocol) || window.__SPEC_INLINE || navigator.onLine === false) return;

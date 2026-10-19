@@ -36,6 +36,7 @@ ko_norm = lambda t: re.sub(r'\s+', ' ', str(t)).strip()
 ko_parts = lambda t: [x.strip() for x in re.split(r'(?<=[.!?])\s+', str(t)) if x.strip()]
 ko_logs = []  # (기기, 문장)
 CLASS_TEXTS = {'로봇이 걸어요.', '현이가 개미를 찾았어요.'}  # 테스트에서 아빠가 넣은 우리 반 문장(미리 녹음 불가 → 기기 음성)
+IDIOM_TEXTS = set()  # 속담·관용어·사자성어 놀이(KREQ-54)에서 읽은 문장 — 녹음 전에는 기기 음성이라 적용 범위 계산에서 따로 세요
 BIG_TEXTS = set()  # 끝말잇기 인정 사전(words-ko.js) 낱말의 "낱말! 뜻" (녹음 없음 → 기기 음성, v0.5.1)
 
 results = []  # (항목, OK/FAIL, 설명)
@@ -409,6 +410,91 @@ with sync_playwright() as p:
             check(f'[{dev}] KREQ-52/53 아빠 화면 설정: 활용 대화 카드·끝말잇기 버튼 켜고 끄기', run_js(page, "() => !!document.querySelector('input[data-set=useCards]') && !!document.querySelector('input[data-set=gameOn]')"))
             page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
 
+        # --- KREQ-54 속담·관용어·사자성어 놀이 ---
+        if not run_js(page, "() => !!document.querySelector('.go-btn')"): page.click('[data-act=home]')
+        page.wait_for_selector('.go-btn')
+        check(f'[{dev}] KREQ-54 홈에 속담·사자성어 버튼', run_js(page, "() => !!document.querySelector('[data-act=idiom]')"))
+        run_js(page, "() => { YUNI.state.log = {}; }")
+        i_s0 = stars()
+        def i_id(): return run_js(page, "() => YUNI.idiom && !YUNI.idiom.done ? YUNI.idiom.i + ':' + YUNI.idiom.act.type : ''")
+        def i_wait(before, timeout=12000):
+            t0 = time.time()
+            while time.time() - t0 < timeout / 1000:
+                if run_js(page, "() => !!document.querySelector('.reward .result-list')"): return 'end'
+                cur_ = i_id()
+                if cur_ and cur_ != before and run_js(page, "() => !!document.querySelector('.stage')"): return cur_
+                page.wait_for_timeout(40)
+            return None
+        page.click('[data-act=idiom]'); page.wait_for_selector('.ikind')
+        cur = i_id(); n = 0; wrong_done = {}; i_types, i_prev_missing, i_bad, i_red, i_kinds, i_items, i_use, i_qts = [], [], [], False, [], [], 0, []
+        i_glow, i_hint, i_copy_star, i_overflow = None, None, None, []
+        while cur and cur != 'end' and n < 30:
+            n += 1
+            a = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.idiom.act))")
+            i_types.append(a['type']); i_kinds.append(a['it']['kind']); i_items.append(a['it']['text'])
+            if run_js(page, "() => YUNI.idiom.i > 0") and not run_js(page, "() => !!document.querySelector('[data-act=prev]:not([disabled])')"): i_prev_missing.append(cur)
+            if run_js(page, "() => !!document.querySelector('.stage input, .stage textarea')"): i_prev_missing.append('input:' + cur)
+            if not run_js(page, "() => document.scrollingElement.scrollWidth <= innerWidth + 1"): i_overflow.append(cur)
+            if a['type'] == 'icard':
+                if n == 1: page.screenshot(path=f'{SHOT}/{dev}_54_card.png')
+                ok_card = run_js(page, "it => { const t = document.querySelector('.stage').innerText; return t.includes(it.text) && t.includes(it.mean) && t.includes('이럴 때 써요'); }", a['it'])
+                if not ok_card: i_prev_missing.append('card:' + a['it']['text'])
+                page.click('[data-act=next]')
+            else:
+                q = a['q']; i_qts.append(q['qt']); wrongs = [o for o in q['opts'] if o != q['ans']]
+                wf = 0 if q['qt'] in wrong_done else {'mean': 1, 'blank': 2, 'when': 3}[q['qt']]; wrong_done[q['qt']] = 1
+                for k in range(min(wf, len(wrongs))):
+                    page.click(f'.ichoice[data-arg="{wrongs[k]}"]'); page.wait_for_timeout(250)
+                if wf:
+                    b_, r_ = scan_bad(page, cur); i_bad += b_; i_red |= r_
+                    if wf == 1: page.screenshot(path=f'{SHOT}/{dev}_54_quiz_{q["qt"]}.png')
+                    if wf == 2: i_hint = run_js(page, "() => { const h = document.getElementById('hintcard'); return !!h && !h.hidden && h.innerText.includes('힌트'); }")
+                    if wf >= 3: i_glow = run_js(page, "a => { const g = [...document.querySelectorAll('.ichoice.glow')]; return g.length === 1 && g[0].dataset.arg === a; }", q['ans'])
+                s_before = stars()
+                page.click(f'.ichoice[data-arg="{q["ans"]}"]')
+                t0 = time.time(); seen = False
+                while time.time() - t0 < 5 and not seen:
+                    seen = run_js(page, "h => { const u = document.getElementById('usecard'); return !!u && !u.hidden && u.innerText.includes('이렇게 써요') && u.innerText.includes(h); }", a['it'].get('hl') or a['it']['text'])
+                    if not seen: page.wait_for_timeout(60)
+                if seen: i_use += 1
+                if wf >= 3: i_copy_star = stars() - s_before
+            nxt = i_wait(cur)
+            if nxt is None: print('  멈춤(속담):', cur, a['type']); break
+            cur = nxt
+        page.screenshot(path=f'{SHOT}/{dev}_54_end.png')
+        i_st = run_js(page, "() => { const S = YUNI.state; return { plays: S.idiom.plays, stars: S.idiom.stars, seen: Object.keys(S.idiom.seen).length, ok: Object.values(S.idiom.seen).filter(x => x.ok > 0).length } }")
+        check(f'[{dev}] KREQ-54 한 번에 5개: 뜻 카드 → 문제 → 활용 대화, 끝 화면', cur == 'end' and i_types == ['icard', 'iquiz'] * 5, f'{cur} {i_types}')
+        check(f'[{dev}] KREQ-54 속담·관용어·사자성어가 번갈아 나옴 ({"·".join(dict.fromkeys(i_kinds))})', len(set(i_kinds)) == 3 and len(set(i_items)) == 5, str(i_kinds))
+        check(f'[{dev}] KREQ-54 문제 세 가지(뜻 고르기·빈칸·이럴 때) 모두 나옴, 보기 4개', set(i_qts) == {'mean', 'blank', 'when'} and run_js(page, "() => YUNI.idiom.acts.filter(a => a.type === 'iquiz').every(a => a.q.opts.length === 4 && a.q.opts.includes(a.q.ans))"), str(i_qts))
+        check(f'[{dev}] KREQ-54 뜻 카드에 표현·뜻·이럴 때 써요, ◀ 이전 버튼, 기본 키보드 없음', not i_prev_missing, str(i_prev_missing[:3]))
+        check(f'[{dev}] KREQ-54/07 틀렸을 때 땡·X·빨간 글자 없음, 2번째 힌트 카드, 3번째 정답 반짝임', not i_bad and not i_red and i_hint is True and i_glow is True, f'{i_bad} {i_red} hint={i_hint} glow={i_glow}')
+        check(f'[{dev}] KREQ-54/64 세 번 틀리고 따라 눌러도 별 1개, 한 번에 5문제 별 5개 (별 {stars() - i_s0})', i_copy_star == 1 and stars() - i_s0 == 5 and i_st['stars'] == 5, json.dumps(i_st))
+        check(f'[{dev}] KREQ-54/53 맞힌 뒤 "이렇게 써요" 활용 대화 카드 (표현 진하게) {i_use}/5', i_use == 5)
+        check(f'[{dev}] KREQ-54 기록: 본 말 5개, 한 번에 맞힌 말 2개(틀린 문제 3개 제외)', i_st['seen'] == 5 and i_st['ok'] == 2 and i_st['plays'] == 1, json.dumps(i_st))
+        check(f'[{dev}] KREQ-01 가로 넘침 없음 (속담 놀이)', not i_overflow, str(i_overflow[:3]))
+        # 한 번 더: 안 본 말이 먼저 나오고, ◀ 이전으로 가면 같은 카드, 같은 문제를 다시 맞혀도 별은 한 번만
+        page.click('[data-act=again]'); page.wait_for_selector('.ikind')
+        items2 = run_js(page, "() => YUNI.idiom.acts.filter(a => a.type === 'icard').map(a => a.it.text)")
+        page.click('[data-act=next]'); i_wait('0:icard')
+        q1 = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.idiom.act))")
+        page.click('[data-act=prev]'); page.wait_for_timeout(200)
+        back = run_js(page, "() => YUNI.idiom.i + ':' + YUNI.idiom.act.type + ':' + YUNI.idiom.act.it.text")
+        page.click('[data-act=next]'); i_wait('0:icard')
+        q1b = run_js(page, "() => JSON.parse(JSON.stringify(YUNI.idiom.act))")
+        s_ = stars(); page.click(f'.ichoice[data-arg="{q1["q"]["ans"]}"]'); i_wait('1:iquiz'); d1 = stars() - s_
+        page.click('[data-act=prev]'); page.wait_for_timeout(200); page.click('[data-act=prev]'); page.wait_for_timeout(200); page.click('[data-act=next]'); i_wait('0:icard')
+        s_ = stars(); page.click(f'.ichoice[data-arg="{q1["q"]["ans"]}"]'); i_wait('1:iquiz'); d2 = stars() - s_
+        check(f'[{dev}] KREQ-54 한 번 더: 아직 안 본 말 5개가 먼저', len(items2) == 5 and not (set(items2) & set(i_items)), str(items2))
+        check(f'[{dev}] KREQ-54/17 ◀ 이전으로 가면 같은 카드·같은 문제, 다시 맞혀도 별은 한 번만', back == '0:icard:' + items2[0] and json.dumps(q1b, sort_keys=True) == json.dumps(q1, sort_keys=True) and d1 == 1 and d2 == 0, f'{back} {d1} {d2}')
+        page.click('[data-act=quit]'); page.wait_for_selector('.reward .result-list'); page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+        if dev == 'tab':  # 아빠 화면 속담 카드·설정
+            page.click('[data-act=parent]'); page.fill('#ans', '1234'); page.click('[data-act=ok]'); page.wait_for_selector('.ptabs')
+            page.click('.ptab[data-arg="progress"]'); page.wait_for_timeout(100)
+            check(f'[{dev}] KREQ-54 아빠 화면: 속담·관용어·사자성어 기록(배운 말·자주 틀리는 말)', run_js(page, "() => { const t = document.body.innerText; return t.includes('속담·관용어·사자성어') && t.includes('배운 말') && t.includes('자주 틀리는 말'); }"))
+            page.click('.ptab[data-arg="settings"]'); page.wait_for_timeout(100)
+            check(f'[{dev}] KREQ-54 아빠 화면 설정: 속담·사자성어 버튼 켜고 끄기', run_js(page, "() => !!document.querySelector('input[data-set=idiomOn]')"))
+            page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
+
         # 받아쓰기 음성: 띄어 읽기 단위로 끊어서 천천히 (0.8)
         run_js(page, "() => { window.__spoken = []; }")
         # --- 아빠 화면 ---
@@ -592,13 +678,18 @@ with sync_playwright() as p:
         check(f'[{dev}] KREQ-65 설정 되돌리기 (녹음 목소리 기본)', run_js(page, "() => YUNI.state.settings.koVoiceMode") == 'rec')
         page.click('[data-act=home]'); page.wait_for_selector('.go-btn')
         ko_logs.extend((dev, t) for t in run_js(page, "() => window.__KO_LOG"))
+        IDIOM_TEXTS.update(run_js(page, "() => { const C = window.CONTENT; const out = ['재미난 말을 배워 볼까? 잘 듣고 따라 말해 봐요.', '다시 생각해 볼까?', '맞았어! 잘했어요!', '이 말은 무슨 뜻일까요?', '빈칸에 들어갈 말을 골라요', '이럴 때 쓰는 말은?', '재미난 말 다 배웠어! 정말 잘했어요!', '재미난 말 다 배웠어! 틀린 말은 다음에 또 나와요.', '재미난 말 끝! 다음에 또 하자!']; (C.idioms || []).forEach(it => { out.push(it.text + '.', it.mean, it.when, `${it.text}. ${it.mean}`); it.use.split(' / ').forEach(l => out.push(l.replace(/^[^:]+:\\s*/, ''))); }); return out; }"))
         check(f'[{dev}] 오류 없음 (끝까지)', not errors, str(errors[:3]))
         cw_warn = run_js(page, "() => YUNI.contentWarnings().warn")
+        run_idioms_ok = run_js(page, "() => { const I = window.CONTENT.idioms || []; const k = ['속담', '관용어', '사자성어']; return k.every(x => I.filter(it => it.kind === x).length >= 10) && I.every(it => it.blank && it.text.includes(it.blank) && it.wrongs.length >= 3 && it.when && it.mean && it.use.includes(it.hl || it.text)); }")
         ctx.close()
 
     # --- KREQ-65 녹음 목록 적용 범위: 하루 흐름에서 실제로 읽은 한국어가 녹음 목록에 있는지 ---
     logged = sorted({ko_norm(t) for _, t in ko_logs if ko_norm(t)})
-    user = [t for t in logged if t in CLASS_TEXTS or ko_norm(t.replace('/', ' ')) in CLASS_TEXTS or any(t.startswith(b + '! ') for b in BIG_TEXTS)]
+    idiom_read = [t for t in logged if t in IDIOM_TEXTS or t.startswith('💡') or '힌트' in t or t.startswith('뜻은 이거예요') or t.startswith('이럴 때 쓰는 말이에요') or '빈칸의 첫 글자는' in t]
+    idiom_rec = [t for t in idiom_read if t in KO_IDX or all(x in KO_IDX for x in ko_parts(t))]
+    print(f'KREQ-54 속담 놀이에서 읽은 글 {len(idiom_read)}개 중 녹음 {len(idiom_rec)}개 (녹음 없는 글은 기기 음성)')
+    user = [t for t in logged if t in idiom_read or t in CLASS_TEXTS or ko_norm(t.replace('/', ' ')) in CLASS_TEXTS or any(t.startswith(b + '! ') for b in BIG_TEXTS)]
     target = [t for t in logged if t not in user]
     covered = [t for t in target if t in KO_IDX or all(x in KO_IDX for x in ko_parts(t))]
     missing = [t for t in target if t not in covered]
@@ -630,8 +721,9 @@ with sync_playwright() as p:
     check('KREQ-65 녹음 파일이 index.json과 맞음', all(os.path.exists(os.path.join(APP, 'audio-ko', f)) for f in KO_IDX.values()), str(len(KO_IDX)))
     check('KREQ-52/53 낱말 사전(dict)에 단원·급수 낱말의 뜻·활용 대화가 모두 있음 (콘텐츠 점검 경고 없음)', not cw_warn, str(cw_warn[:3]))
     check('KREQ-52 인정 사전 words-ko.js: 명사 2만 개 이상, index.html·sw.js·업데이트 목록에', len(json.loads(re.search(r'window\.KOWORDS = (\{.*\});', open(f'{APP}/words-ko.js', encoding='utf-8').read(), re.S).group(1))) > 20000 and 'words-ko.js' in sw and 'words-ko.js' in open(f'{APP}/index.html', encoding='utf-8').read() and "'words-ko.js'" in src)
+    check('KREQ-54 속담·관용어·사자성어 content.js idioms: 종류마다 10개 이상, 콘텐츠 점검 경고 없음', cw_warn == [] and run_idioms_ok, str(run_idioms_ok))
     check('KREQ-53 낱말 사전 녹음: "낱말! 뜻"과 활용 대화가 녹음 목록에', all(k in KO_IDX for k in ['나비! 꽃밭을 날아다니는 예쁜 날개 곤충이에요.', '노란 나비가 꽃에 앉았어!', '끝말잇기 하자!']))
-    for rid in ['KREQ-01', 'KREQ-02', 'KREQ-04', 'KREQ-07', 'KREQ-08', 'KREQ-12', 'KREQ-16', 'KREQ-17', 'KREQ-18', 'KREQ-40', 'KREQ-41', 'KREQ-42', 'KREQ-43', 'KREQ-45', 'KREQ-47', 'KREQ-52', 'KREQ-53', 'KREQ-60', 'KREQ-61', 'KREQ-62', 'KREQ-63', 'KREQ-64', 'KREQ-65']:
+    for rid in ['KREQ-54', 'KREQ-01', 'KREQ-02', 'KREQ-04', 'KREQ-07', 'KREQ-08', 'KREQ-12', 'KREQ-16', 'KREQ-17', 'KREQ-18', 'KREQ-40', 'KREQ-41', 'KREQ-42', 'KREQ-43', 'KREQ-45', 'KREQ-47', 'KREQ-52', 'KREQ-53', 'KREQ-60', 'KREQ-61', 'KREQ-62', 'KREQ-63', 'KREQ-64', 'KREQ-65']:
         check(f'기획서.md에 {rid} 있음', rid in spec)
     br.close()
 
